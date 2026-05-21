@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#050816" />
+    <meta name="description" content="SMShop: curadoria de tecnologia, acessórios e gadgets escolhidos para deixar a rotina mais prática, bonita e interessante." />
+    <meta name="robots" content="index,follow" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="SMShop | Achados de tecnologia e lifestyle" />
+    <meta property="og:description" content="Tecnologia, acessórios e gadgets escolhidos para deixar sua rotina mais prática, bonita e interessante." />
+    <meta property="og:image" content="/imagens/logo/logo.png" />
+    <meta property="og:url" content="/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SMShop | Tecnologia para o dia a dia" />
+    <meta name="twitter:description" content="Gadgets, smart tech e ofertas selecionadas em uma experiência premium." />
+    <link rel="icon" href="/imagens/logo/logo.png" />
+    <link rel="apple-touch-icon" href="/imagens/logo/logo.png" />
+    <link rel="preload" href="/imagens/logo/logo.png" as="image" />
+    <link rel="preload" href="/banner/bannersm.png" as="image" />
+    <link rel="preload" href="/banner/banner-mobile.png" as="image" media="(max-width: 768px)" />
+    <link rel="stylesheet" href="/src/css/styles.css" />
+    <title>SMShop | Curadoria de tecnologia</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "SMShop",
+        "url": "/",
+        "logo": "/imagens/logo/logo.png",
+        "email": "contatossmshop@gmail.com",
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "telephone": "+55 11 96994-0100",
+          "contactType": "customer support",
+          "areaServed": "BR",
+          "availableLanguage": "Portuguese"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div class="splash" data-splash>
+      <img src="/imagens/logo/logo.png" alt="SMShop" />
+      <span>Carregando ofertas premium</span>
+    </div>
+
+    <header class="site-header" data-header>
+      <a class="brand" href="/" aria-label="SMShop home">
+        <img src="/imagens/logo/logo.png" alt="SMShop" />
+      </a>
+      <nav class="desktop-nav" aria-label="Navegação principal">
+        <a href="/">Home</a>
+        <a href="/produtos">Produtos</a>
+        <div class="nav-dropdown">
+          <button type="button" data-category-toggle aria-expanded="false">Categorias</button>
+          <div class="category-menu" data-category-menu>
+            <a href="/produtos?category=smartwatch">Smartwatch</a>
+            <a href="/produtos?category=audio">Fones</a>
+            <a href="/produtos?category=energia">Carregadores</a>
+            <a href="/produtos">Gadgets</a>
+            <a href="/produtos?category=creator">Setup</a>
+            <a href="/produtos">Casa inteligente</a>
+          </div>
+        </div>
+        <a href="/ofertas">Ofertas</a>
+        <a href="/sobre">Sobre</a>
+        <a href="/contato">Contato</a>
+      </nav>
+      <div class="header-actions">
+        <button class="icon-button" data-search-open aria-label="Buscar">
+          <span aria-hidden="true">⌕</span>
+        </button>
+        <button class="icon-button" data-theme-toggle aria-label="Alternar tema">
+          <span aria-hidden="true">◐</span>
+        </button>
+        <a class="icon-button favorite-link" href="/favoritos" aria-label="Favoritos">
+          <span aria-hidden="true">♡</span>
+          <strong data-favorite-count>0</strong>
+        </a>
+        <button class="icon-button mobile-menu-button" data-menu-toggle aria-label="Abrir menu">
+          <span aria-hidden="true">☰</span>
+        </button>
+      </div>
+    </header>
+
+    <aside class="mobile-drawer" data-mobile-drawer aria-hidden="true">
+      <div class="mobile-drawer-inner">
+        <a href="/">Home</a>
+        <a href="/produtos">Produtos</a>
+        <a href="/ofertas">Ofertas</a>
+        <a href="/favoritos">Favoritos</a>
+        <a href="/sobre">Sobre</a>
+        <a href="/contato">Contato</a>
+        <div class="mobile-category-list">
+          <span>Categorias</span>
+          <a href="/produtos?category=smartwatch">Smartwatch</a>
+          <a href="/produtos?category=audio">Fones</a>
+          <a href="/produtos?category=energia">Carregadores</a>
+          <a href="/produtos?category=creator">Setup</a>
+        </div>
+      </div>
+    </aside>
+    <div class="ui-scrim" data-ui-scrim></div>
+
+    <main id="app" tabindex="-1"></main>
+
+    <footer class="site-footer">
+      <div class="footer-grid">
+        <div>
+          <img class="footer-logo" src="/imagens/logo/logo.png" alt="SMShop" />
+          <p>A SMShop reúne tecnologia, acessórios e achados visuais em uma curadoria feita pra quem gosta de descobrir produtos bons sem perder tempo.</p>
+          <p class="affiliate-note">Os links podem levar para lojas externas.</p>
+        </div>
+        <div>
+          <h3>Navegação</h3>
+          <a href="/">Home</a>
+          <a href="/produtos">Produtos</a>
+          <a href="/ofertas">Ofertas do dia</a>
+          <a href="/favoritos">Favoritos</a>
+        </div>
+        <div>
+          <h3>Categorias</h3>
+          <a href="/categoria/tecnologia">Tecnologia</a>
+          <a href="/produtos">Gadgets</a>
+          <a href="/produtos?tag=smartwatch">Smartwatch</a>
+          <a href="/produtos">Casa inteligente</a>
+        </div>
+        <div>
+          <h3>Contato</h3>
+          <a href="mailto:contatossmshop@gmail.com">contatossmshop@gmail.com</a>
+          <a href="https://wa.me/5511969940100" target="_blank" rel="noopener">WhatsApp SMShop</a>
+          <a href="/politica">Política de privacidade</a>
+          <a href="/termos">Termos de uso</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>© 2026 SMShop. Todos os direitos reservados.</span>
+        <span>Curadoria independente de tecnologia e achados visuais.</span>
+      </div>
+    </footer>
+
+    <button class="whatsapp-float" data-whatsapp aria-label="Falar com a SMShop no WhatsApp">WhatsApp</button>
+
+    <dialog class="product-modal" data-modal>
+      <button class="modal-close" data-modal-close aria-label="Fechar">×</button>
+      <div class="modal-shell" data-modal-content></div>
+    </dialog>
+
+    <dialog class="lead-popup" data-lead-popup>
+      <button class="modal-close" data-lead-close aria-label="Fechar">×</button>
+      <div class="lead-card">
+        <span class="eyebrow">Cupom SMShop</span>
+        <h2>Receba os melhores achados da semana.</h2>
+        <p>Produtos úteis e boas ofertas direto no seu email.</p>
+        <form data-lead-form>
+          <input type="email" name="email" placeholder="seuemail@exemplo.com" required />
+          <button class="primary-button" type="submit">Receber novidades</button>
+        </form>
+        <small data-lead-message></small>
+      </div>
+    </dialog>
+
+    <div class="search-overlay" data-search-overlay aria-hidden="true">
+      <div class="search-panel">
+        <button class="modal-close" data-search-close aria-label="Fechar busca">×</button>
+        <label for="global-search">Buscar produtos</label>
+        <input id="global-search" type="search" data-global-search placeholder="Smartwatch, fone, casa inteligente..." />
+        <div class="search-results" data-search-results></div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/js/main.js"></script>
+  </body>
+</html>
