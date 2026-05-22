@@ -200,13 +200,25 @@ async function fetchMeliResource(pathname, headers) {
 function normalizeMeliItem(meliId, item) {
   const stock = Number(item.available_quantity || 0);
   const status = item.status || null;
-  const price = numberOrNull(item.price);
+  const price = extractPriceValue(item);
+  const oldPrice = extractOriginalPriceValue(item);
+  console.log(
+    `[ML RAW PRICE] ${JSON.stringify({
+      id: meliId,
+      source: "item",
+      price: item.price ?? null,
+      sale_price: item.sale_price ?? null,
+      installments: item.installments ?? null,
+      variations: summarizeVariationPrices(item.variations)
+    })}`
+  );
+  console.log(`[ML PARSED PRICE] ${JSON.stringify({ id: meliId, source: "item", value: price, valid: price !== null })}`);
   return {
     meliId,
     type: "item",
     title: item.title || null,
     price,
-    oldPrice: numberOrNull(item.original_price),
+    oldPrice,
     currency: item.currency_id || "BRL",
     heroImage: bestPicture(item),
     images: getPictures(item),
@@ -223,11 +235,34 @@ function normalizeMeliItem(meliId, item) {
 function normalizeMeliCatalogProduct(meliId, product, resolvedPrice = null) {
   const buyBoxWinner = product.buy_box_winner || {};
   const pictures = getPictures(product);
-  const price = numberOrNull(product.price ?? buyBoxWinner.price ?? resolvedPrice?.price);
-  const oldPrice = numberOrNull(product.original_price ?? buyBoxWinner.original_price ?? resolvedPrice?.original_price);
+  const price = firstNumber([
+    extractPriceValue(product),
+    extractPriceValue(buyBoxWinner),
+    extractPriceValue(resolvedPrice)
+  ]);
+  const oldPrice = firstNumber([
+    extractOriginalPriceValue(product),
+    extractOriginalPriceValue(buyBoxWinner),
+    extractOriginalPriceValue(resolvedPrice)
+  ]);
   const stock = Number(product.available_quantity || buyBoxWinner.available_quantity || resolvedPrice?.available_quantity || 0);
   const status = product.status || buyBoxWinner.status || resolvedPrice?.status || null;
   const syncStatus = price === null ? "partial" : "synced";
+  console.log(
+    `[ML RAW PRICE] ${JSON.stringify({
+      id: meliId,
+      source: "catalog_product",
+      productPrice: product.price ?? null,
+      productSalePrice: product.sale_price ?? null,
+      buyBoxPrice: buyBoxWinner.price ?? null,
+      buyBoxSalePrice: buyBoxWinner.sale_price ?? null,
+      resolvedPrice: resolvedPrice?.price ?? null,
+      resolvedSalePrice: resolvedPrice?.sale_price ?? null,
+      installments: product.installments ?? buyBoxWinner.installments ?? resolvedPrice?.installments ?? null,
+      variations: summarizeVariationPrices(product.variations)
+    })}`
+  );
+  console.log(`[ML PARSED PRICE] ${JSON.stringify({ id: meliId, source: "catalog_product", value: price, valid: price !== null })}`);
 
   return {
     meliId,
@@ -254,8 +289,8 @@ function mapItemResponse(item) {
   return {
     id: item.id || null,
     title: item.title || null,
-    price: numberOrNull(item.price),
-    original_price: numberOrNull(item.original_price),
+    price: extractPriceValue(item),
+    original_price: extractOriginalPriceValue(item),
     available_quantity: Number(item.available_quantity || 0),
     thumbnail: item.secure_thumbnail || item.thumbnail || null,
     pictures: Array.isArray(item.pictures) ? item.pictures.map((picture) => picture.secure_url || picture.url).filter(Boolean) : [],
@@ -272,8 +307,8 @@ function mapCatalogProductResponse(product, offer = null) {
   return {
     id: product.id || null,
     title: product.name || product.title || null,
-    price: numberOrNull(product.price ?? buyBoxWinner.price ?? offer?.price),
-    original_price: numberOrNull(product.original_price ?? buyBoxWinner.original_price ?? offer?.original_price),
+    price: firstNumber([extractPriceValue(product), extractPriceValue(buyBoxWinner), extractPriceValue(offer)]),
+    original_price: firstNumber([extractOriginalPriceValue(product), extractOriginalPriceValue(buyBoxWinner), extractOriginalPriceValue(offer)]),
     available_quantity: Number(product.available_quantity || buyBoxWinner.available_quantity || offer?.available_quantity || 0),
     thumbnail: product.thumbnail || buyBoxWinner.thumbnail || offer?.thumbnail || pictures[0] || null,
     pictures,
@@ -362,9 +397,22 @@ function normalizeOffer(offer, source) {
   if (!offer || typeof offer !== "object") return null;
   const item = offer.item || offer;
   const seller = normalizeSeller(item.seller || item.seller_info || item.seller_address || item.seller_id || item.official_store_id);
-  const price = numberOrNull(item.price ?? item.current_price ?? item.amount);
-  const originalPrice = numberOrNull(item.original_price ?? item.regular_amount ?? item.base_price);
+  const price = extractPriceValue(item);
+  const originalPrice = extractOriginalPriceValue(item);
   const itemId = item.item_id || item.id || item.catalog_listing_id || null;
+  console.log(
+    `[ML RAW PRICE] ${JSON.stringify({
+      id: itemId || "sem-id",
+      source,
+      price: item.price ?? null,
+      current_price: item.current_price ?? null,
+      sale_price: item.sale_price ?? null,
+      amount: item.amount ?? null,
+      installments: item.installments ?? null,
+      variations: summarizeVariationPrices(item.variations)
+    })}`
+  );
+  console.log(`[ML PARSED PRICE] ${JSON.stringify({ id: itemId || "sem-id", source, value: price, valid: price !== null })}`);
 
   return {
     ...item,
@@ -476,6 +524,61 @@ function getPictures(item) {
 function numberOrNull(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function extractPriceValue(value) {
+  if (!value || typeof value !== "object") return numberOrNull(value);
+
+  return firstNumber([
+    value.price,
+    value.current_price,
+    value.amount,
+    value.sale_price?.amount,
+    value.sale_price?.regular_amount,
+    value.sale_price,
+    value.installments?.amount,
+    value.installments?.total_amount,
+    value.prices?.prices?.find((price) => price?.type === "standard")?.amount,
+    value.prices?.prices?.[0]?.amount,
+    minVariationPrice(value.variations)
+  ]);
+}
+
+function extractOriginalPriceValue(value) {
+  if (!value || typeof value !== "object") return null;
+
+  return firstNumber([
+    value.original_price,
+    value.regular_amount,
+    value.base_price,
+    value.sale_price?.regular_amount,
+    value.sale_price?.metadata?.campaign_discount_percentage ? value.price : null,
+    value.prices?.prices?.find((price) => price?.type === "regular")?.amount
+  ]);
+}
+
+function firstNumber(values) {
+  for (const value of values) {
+    const number = numberOrNull(value);
+    if (number !== null && number > 0) return number;
+  }
+  return null;
+}
+
+function minVariationPrice(variations) {
+  if (!Array.isArray(variations)) return null;
+  const prices = variations.map((variation) => extractPriceValue(variation)).filter((price) => price !== null && price > 0);
+  return prices.length ? Math.min(...prices) : null;
+}
+
+function summarizeVariationPrices(variations) {
+  if (!Array.isArray(variations)) return null;
+  return variations.slice(0, 5).map((variation) => ({
+    id: variation.id || null,
+    price: variation.price ?? null,
+    sale_price: variation.sale_price ?? null,
+    installments: variation.installments ?? null
+  }));
 }
 
 async function readCache() {
