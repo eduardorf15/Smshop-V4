@@ -18,20 +18,63 @@ let cache;
 let cacheFetchedAt = 0;
 
 export async function listProducts() {
-  if (cache && Date.now() - cacheFetchedAt < productCacheTtlMs) return cache;
+  if (cache && Date.now() - cacheFetchedAt < productCacheTtlMs) {
+    const cachedTech001 = cache.find((product) => product.id === "tech-001");
+    console.log(
+      `[ML SYNC] listProducts usando cache em memoria: tech-001 meliId=${cachedTech001?.meliId || "null"} dataSource=${cachedTech001?.dataSource || "null"}`
+    );
+    return cache;
+  }
 
   const products = await buildManualProducts();
-  const mercadoLivreData = await getMercadoLivreData(products);
-  const mergedProducts = products.map((product) => mergeProductData(product, mercadoLivreData[product.id]));
+  const tech001 = products.find((product) => product.id === "tech-001");
+  console.log(
+    `[ML SYNC] tech-001 veio do catalogo: meliId=${tech001?.meliId || "null"} dataSource=${tech001?.dataSource || "null"}`
+  );
+  const mergedProducts = await syncProductsWithMercadoLivre(products);
 
   cache = mergedProducts;
   cacheFetchedAt = Date.now();
   return mergedProducts;
 }
 
+export async function syncProductsWithMercadoLivre(products, options = {}) {
+  const productsWithMeliId = products.filter((product) => product.meliId);
+  if (!productsWithMeliId.length) {
+    console.log("[ML SYNC] Nenhum produto com meliId detectado; usando catalogo manual.");
+    return products;
+  }
+
+  productsWithMeliId.forEach((product) => {
+    console.log(`[ML SYNC] Detectado meliId ${product.meliId} em ${product.id}`);
+  });
+
+  const mercadoLivreData = await getMercadoLivreData(productsWithMeliId, options);
+  return products.map((product) => {
+    if (!product.meliId) {
+      return product;
+    }
+    if (product.id === "tech-001") {
+      console.log(
+        `[ML SYNC BEFORE] ${JSON.stringify({
+          id: product.id,
+          meliId: product.meliId,
+          dataSource: product.dataSource,
+          syncStatus: product.syncStatus,
+          price: product.price
+        })}`
+      );
+    }
+    return mergeProductData(product, mercadoLivreData[product.id]);
+  });
+}
+
 export async function getProductById(id) {
   const products = await listProducts();
-  return products.find((product) => product.id === id || product.sku === id);
+  const product = products.find((item) => item.id === id || item.sku === id);
+  if (!product?.meliId || product.dataSource !== "manual") return product;
+  const [syncedProduct] = await syncProductsWithMercadoLivre([product]);
+  return syncedProduct;
 }
 
 export async function refreshProductsCache() {
@@ -68,9 +111,10 @@ async function buildManualProducts() {
       const productType = catalog.productType || category;
       const productTypeSlug = slugify(productType);
       const id = catalog.id || `tech-${folder}`;
+      const meliId = productMeliIds[id] || getMeliId(catalog);
       if (!affiliateUrl) console.warn(`[SMShop] Produto ${folder} sem link afiliado cadastrado.`);
 
-      return {
+      const product = {
         id,
         sku: folder,
         order: index + 1,
@@ -79,7 +123,7 @@ async function buildManualProducts() {
         categorySlug,
         productType,
         productTypeSlug,
-        meliId: productMeliIds[id] || getMeliId(catalog),
+        meliId,
         meliUrl: catalog.meliUrl || null,
         description: catalog.description,
         images,
@@ -95,8 +139,15 @@ async function buildManualProducts() {
         featured: index < 10 || index % 6 === 0,
         badge: badgeFor(index),
         tags: [...new Set([...(catalog.categoryTags || []), productTypeSlug, ...catalog.tags])],
-        dataSource: "manual"
+        dataSource: "manual",
+        syncStatus: "fallback"
       };
+
+      if (product.id === "tech-001" || product.meliId) {
+        console.log(`[ML SYNC] Produto base ${product.id}: meliId=${product.meliId || "null"} dataSource=${product.dataSource}`);
+      }
+
+      return product;
     })
   );
 
@@ -104,12 +155,34 @@ async function buildManualProducts() {
 }
 
 function mergeProductData(product, mercadoLivreData) {
-  if (!mercadoLivreData) return product;
-  const images = mercadoLivreData.images?.length ? mercadoLivreData.images : product.images;
-  const price = mercadoLivreData.price ?? product.price;
-  const oldPrice = mercadoLivreData.oldPrice ?? product.oldPrice;
+  if (!mercadoLivreData) {
+    console.log(`[ML SYNC] Fallback manual para ${product.id}: dados Mercado Livre ausentes.`);
+    return { ...product, syncStatus: "fallback" };
+  }
+  if (mercadoLivreData.syncStatus === "error") {
+    console.log(`[ML SYNC] Fallback manual para ${product.id}: erro Mercado Livre: ${mercadoLivreData.errorMessage || "erro desconhecido"}`);
+    return {
+      ...product,
+      syncStatus: "error",
+      syncError: mercadoLivreData.errorMessage || "Falha ao sincronizar com Mercado Livre"
+    };
+  }
 
-  return {
+  const images = mercadoLivreData.images?.length ? mercadoLivreData.images : product.images;
+  const hasMercadoLivrePrice = mercadoLivreData.price !== null && mercadoLivreData.price !== undefined;
+  const price = hasMercadoLivrePrice ? mercadoLivreData.price : product.price;
+  const oldPrice = mercadoLivreData.oldPrice ?? product.oldPrice;
+  const syncStatus = hasMercadoLivrePrice ? "synced" : mercadoLivreData.syncStatus || "partial";
+  const dataSource = syncStatus === "synced" ? "mercadolivre" : "mercadolivre-partial";
+
+  console.log(
+    `[ML SYNC] Aplicando merge em ${product.id}: type=${mercadoLivreData.type || "unknown"} price=${hasMercadoLivrePrice ? mercadoLivreData.price : "fallback-manual"} dataSource=${dataSource} syncStatus=${syncStatus}`
+  );
+  if (product.id === "tech-001" && dataSource === "mercadolivre") {
+    console.log("[ML SYNC] Produto tech-001 sincronizado");
+  }
+
+  const mergedProduct = {
     ...product,
     name: mercadoLivreData.title || product.name,
     price,
@@ -124,8 +197,23 @@ function mergeProductData(product, mercadoLivreData) {
     soldQuantity: mercadoLivreData.soldQuantity ?? product.soldQuantity ?? null,
     mercadoLivrePermalink: mercadoLivreData.permalink || null,
     syncedAt: mercadoLivreData.fetchedAt,
-    dataSource: "mercadolivre"
+    dataSource,
+    syncStatus
   };
+
+  if (product.id === "tech-001") {
+    console.log(
+      `[ML SYNC AFTER] ${JSON.stringify({
+        id: mergedProduct.id,
+        meliId: mergedProduct.meliId,
+        dataSource: mergedProduct.dataSource,
+        syncStatus: mergedProduct.syncStatus,
+        price: mergedProduct.price
+      })}`
+    );
+  }
+
+  return mergedProduct;
 }
 
 function naturalNumber(filename) {

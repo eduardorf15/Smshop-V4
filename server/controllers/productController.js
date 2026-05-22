@@ -1,4 +1,4 @@
-import { getProductById, listProducts, refreshProductsCache } from "../services/productService.js";
+import { getProductById, listProducts, refreshProductsCache, syncProductsWithMercadoLivre } from "../services/productService.js";
 
 export async function getProducts(req, res, next) {
   try {
@@ -26,11 +26,37 @@ export async function getProducts(req, res, next) {
       });
     }
 
+    filtered = await syncProductsWithMercadoLivre(filtered);
+
     if (sort === "price-asc") filtered.sort((a, b) => a.price - b.price);
     if (sort === "price-desc") filtered.sort((a, b) => b.price - a.price);
     if (sort === "discount") filtered.sort((a, b) => Number(b.onOffer) - Number(a.onOffer));
     if (sort === "rating") filtered.sort((a, b) => b.rating - a.rating);
 
+    const tech001 = filtered.find((product) => product.id === "tech-001");
+    if (tech001) {
+      console.log(
+        `[ML SYNC RESPONSE] ${JSON.stringify({
+          id: tech001.id,
+          meliId: tech001.meliId,
+          dataSource: tech001.dataSource,
+          syncStatus: tech001.syncStatus,
+          price: tech001.price
+        })}`
+      );
+      console.log(
+        `[ML SYNC] Resposta final /api/products tech-001: meliId=${tech001.meliId || "null"} dataSource=${tech001.dataSource || "null"} syncStatus=${tech001.syncStatus || "null"} price=${tech001.price}`
+      );
+      if (tech001.dataSource === "mercadolivre") {
+        console.log("[ML SYNC] Produto tech-001 sincronizado");
+      } else {
+        console.log("[ML SYNC] Fallback manual para tech-001 no res.json final.");
+      }
+    }
+
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
     res.json({ ok: true, count: filtered.length, products: filtered });
   } catch (error) {
     next(error);

@@ -69,7 +69,7 @@ export async function readSavedToken() {
 
   try {
     const raw = await fs.readFile(tokenFile, "utf8");
-    memoryToken = JSON.parse(raw);
+    memoryToken = normalizeToken(JSON.parse(raw));
     return memoryToken;
   } catch (error) {
     if (error.code === "ENOENT") return null;
@@ -87,7 +87,7 @@ export async function getConnectionStatus() {
   }
 
   return {
-    connected: Boolean(token.refreshToken),
+    connected: Boolean(token.accessToken || token.refreshToken),
     expiresAt: token.expiresAt || null,
     userId: token.userId || null
   };
@@ -95,12 +95,16 @@ export async function getConnectionStatus() {
 
 export async function getValidAccessToken() {
   const token = await readSavedToken();
-  if (!token?.refreshToken) {
+  if (!token?.accessToken && !token?.refreshToken) {
     throw createPublicError("Mercado Livre não conectado. Acesse /auth/mercadolivre para conectar primeiro.", 401);
   }
 
-  if (!isExpiredOrNearExpiry(token)) {
+  if (token.accessToken && !isExpiredOrNearExpiry(token)) {
     return token.accessToken;
+  }
+
+  if (!token.refreshToken) {
+    throw createPublicError("Access token do Mercado Livre expirado e refresh token não encontrado.", 401);
   }
 
   const refreshedToken = await refreshAccessToken(token.refreshToken);
@@ -159,6 +163,27 @@ function isExpiredOrNearExpiry(token) {
   const expiresAt = Date.parse(token.expiresAt || "");
   if (!Number.isFinite(expiresAt)) return true;
   return Date.now() + refreshSkewMs >= expiresAt;
+}
+
+function normalizeToken(token) {
+  if (!token) return null;
+  const expiresIn = Number(token.expires_in || 0);
+  const savedAt = token.savedAt || token.saved_at || new Date().toISOString();
+  const savedAtTime = Date.parse(savedAt);
+  const expiresAt =
+    token.expiresAt ||
+    token.expires_at ||
+    (expiresIn && Number.isFinite(savedAtTime) ? new Date(savedAtTime + expiresIn * 1000).toISOString() : null);
+
+  return {
+    accessToken: token.accessToken || token.access_token || null,
+    refreshToken: token.refreshToken || token.refresh_token || null,
+    tokenType: token.tokenType || token.token_type || "bearer",
+    scope: token.scope || null,
+    userId: token.userId || token.user_id || null,
+    expiresAt,
+    savedAt
+  };
 }
 
 function createPublicError(message, statusCode) {
