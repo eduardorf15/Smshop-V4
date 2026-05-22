@@ -67,6 +67,12 @@ export async function refreshMercadoLivreCache(products) {
   };
 }
 
+export async function fetchMercadoLivreDataById(meliId, options = {}) {
+  const normalizedMeliId = normalizeMeliId(meliId);
+  const dataByProductId = await getMercadoLivreData([{ id: normalizedMeliId, meliId: normalizedMeliId }], options);
+  return dataByProductId[normalizedMeliId] || null;
+}
+
 export function getMeliId(product) {
   if (product.meliId) return normalizeMeliId(product.meliId);
   if (product.meliUrl) return extractMeliId(product.meliUrl);
@@ -74,8 +80,18 @@ export function getMeliId(product) {
 }
 
 function extractMeliId(value) {
-  const match = String(value).match(/\b(ML[A-Z]{1,2}-?\d{6,})\b/i);
-  return match ? normalizeMeliId(match[1]) : null;
+  return extractMercadoLivreId(value);
+}
+
+export function extractMercadoLivreId(value) {
+  const text = String(value || "");
+  const catalogMatch = text.match(/\/p\/(ML[A-Z]{1,2}-?\d{6,})\b/i);
+  if (catalogMatch) return normalizeMeliId(catalogMatch[1]);
+
+  const itemMatch = text.match(/\b(ML[A-Z]{1,2})-?(\d{6,})\b/i);
+  if (itemMatch) return normalizeMeliId(`${itemMatch[1]}${itemMatch[2]}`);
+
+  return null;
 }
 
 function normalizeMeliId(value) {

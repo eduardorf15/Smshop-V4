@@ -3,12 +3,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { affiliateLinks } from "../../src/data/affiliate-links.js";
 import { productCatalog } from "../../src/data/product-catalog.js";
-import { getMercadoLivreData, getMeliId, refreshMercadoLivreCache } from "./mercadoLivreService.js";
+import {
+  extractMercadoLivreId,
+  fetchMercadoLivreDataById,
+  getMercadoLivreData,
+  getMeliId,
+  refreshMercadoLivreCache
+} from "./mercadoLivreService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "../..");
 const productRoot = path.join(rootDir, "imagens", "tecnologia");
+const importedProductsFile = path.join(rootDir, "src/data/imported-products.json");
 const imageExt = new Set([".webp", ".png", ".jpg", ".jpeg", ".avif"]);
 const productCacheTtlMs = Number(process.env.PRODUCT_CACHE_TTL_MS || process.env.MELI_CACHE_TTL_MS || 6 * 60 * 60 * 1000);
 const productMeliIds = {
@@ -86,31 +93,114 @@ export async function refreshProductsCache() {
   return result;
 }
 
+export async function importMercadoLivreProduct({ input, category = "Tecnologia", affiliateUrl, tags = [], featured = false }) {
+  const meliId = extractMercadoLivreId(input);
+  if (!meliId) {
+    throw createPublicError("Informe uma URL ou ID válido do Mercado Livre.", 400);
+  }
+
+  if (!affiliateUrl) {
+    throw createPublicError("affiliateUrl é obrigatório para importar produto.", 400);
+  }
+
+  const safeCategory = String(category || "Tecnologia");
+  const safeTags = normalizeTags(tags);
+  const existingProducts = await buildManualProducts();
+  const existingProduct = existingProducts.find((product) => product.meliId === meliId);
+  const mercadoLivreData = await fetchMercadoLivreDataById(meliId, { force: true });
+  if (mercadoLivreData?.syncStatus === "error") {
+    throw createPublicError(`Falha ao buscar produto no Mercado Livre: ${mercadoLivreData.errorMessage || "erro desconhecido"}`, 502);
+  }
+
+  const importedProducts = await readImportedProducts();
+  const importedProduct = buildImportedProduct({
+    existingProduct,
+    mercadoLivreData,
+    meliId,
+    category: safeCategory,
+    affiliateUrl,
+    tags: safeTags,
+    featured
+  });
+  const nextImportedProducts = upsertImportedProduct(importedProducts, importedProduct);
+
+  await writeImportedProducts(nextImportedProducts);
+  cache = null;
+  cacheFetchedAt = 0;
+
+  const [syncedProduct] = await syncProductsWithMercadoLivre([toRuntimeProduct(importedProduct, existingProduct)], { force: true });
+  return {
+    imported: !existingProduct,
+    updated: Boolean(existingProduct),
+    product: syncedProduct
+  };
+}
+
+export async function forceRefreshMercadoLivreProducts() {
+  const products = await buildManualProducts();
+  const productsWithMeliId = products.filter((product) => product.meliId);
+  const result = await refreshMercadoLivreCache(productsWithMeliId);
+  cache = null;
+  cacheFetchedAt = 0;
+  const syncedProducts = await listProducts();
+
+  return {
+    ...result,
+    total: products.length,
+    withMeliId: productsWithMeliId.length,
+    refreshed: syncedProducts.filter((product) => product.meliId && product.syncStatus === "synced").length
+  };
+}
+
+export async function getSyncReport() {
+  const products = await listProducts();
+  const report = {
+    total: products.length,
+    withMeliId: products.filter((product) => product.meliId).length,
+    synced: 0,
+    partial: 0,
+    fallback: 0,
+    error: 0
+  };
+
+  products.forEach((product) => {
+    if (product.syncStatus === "synced") report.synced += 1;
+    else if (product.syncStatus === "partial") report.partial += 1;
+    else if (product.syncStatus === "error") report.error += 1;
+    else report.fallback += 1;
+  });
+
+  return report;
+}
+
 async function buildManualProducts() {
-  const folderNames = (await fs.readdir(productRoot, { withFileTypes: true }))
+  const catalogProducts = await getCatalogProducts();
+  const folderNames = new Set(
+    (await fs.readdir(productRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .filter((name) => /^\d+$/.test(name))
-    .sort((a, b) => Number(a) - Number(b))
-    .filter((folder) => productCatalog.some((product) => product.sku === folder));
+  );
 
   const products = await Promise.all(
-    folderNames.map(async (folder, index) => {
+    catalogProducts.map(async (catalog, index) => {
+      const folder = catalog.sku;
       const absoluteFolder = path.join(productRoot, folder);
-      const files = (await fs.readdir(absoluteFolder, { withFileTypes: true }))
-        .filter((entry) => entry.isFile() && imageExt.has(path.extname(entry.name).toLowerCase()))
-        .map((entry) => entry.name)
-        .sort((a, b) => naturalNumber(a) - naturalNumber(b));
+      const files = folderNames.has(folder)
+        ? (await fs.readdir(absoluteFolder, { withFileTypes: true }))
+            .filter((entry) => entry.isFile() && imageExt.has(path.extname(entry.name).toLowerCase()))
+            .map((entry) => entry.name)
+            .sort((a, b) => naturalNumber(a) - naturalNumber(b))
+        : [];
 
       const images = files.map((file) => `/imagens/tecnologia/${folder}/${file}`);
-      const catalog = productCatalog.find((product) => product.sku === folder);
       const affiliateUrl = catalog.affiliateUrl || affiliateLinks[index] || null;
       const price = catalog.price;
       const category = catalog.category;
       const categorySlug = catalog.categorySlug || slugify(category);
       const productType = catalog.productType || category;
       const productTypeSlug = slugify(productType);
-      const id = catalog.id || `tech-${folder}`;
+      const id = catalog.id || (/^\d+$/.test(folder) ? `tech-${folder}` : `meli-${getMeliId(catalog) || folder}`);
       const meliId = productMeliIds[id] || getMeliId(catalog);
       if (!affiliateUrl) console.warn(`[SMShop] Produto ${folder} sem link afiliado cadastrado.`);
 
@@ -135,10 +225,10 @@ async function buildManualProducts() {
         rating: Number((4.6 + ((index % 4) * 0.1)).toFixed(1)),
         reviews: 120 + index * 17,
         available: Boolean(images.length),
-        onOffer: index < 8 || index % 4 === 0,
-        featured: index < 10 || index % 6 === 0,
+        onOffer: catalog.onOffer ?? (index < 8 || index % 4 === 0),
+        featured: catalog.featured ?? (index < 10 || index % 6 === 0),
         badge: badgeFor(index),
-        tags: [...new Set([...(catalog.categoryTags || []), productTypeSlug, ...catalog.tags])],
+        tags: [...new Set([...(catalog.categoryTags || []), productTypeSlug, ...(catalog.tags || [])])],
         dataSource: "manual",
         syncStatus: "fallback"
       };
@@ -236,4 +326,115 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+}
+
+async function getCatalogProducts() {
+  const importedProducts = await readImportedProducts();
+  const productsByKey = new Map();
+
+  productCatalog.forEach((product, index) => {
+    const key = getCatalogKey(product);
+    productsByKey.set(key, { ...product, order: product.order || index + 1 });
+  });
+
+  importedProducts.forEach((product, index) => {
+    const key = getCatalogKey(product);
+    const existing = productsByKey.get(key);
+    if (existing) {
+      productsByKey.set(key, {
+        ...existing,
+        ...product,
+        id: existing.id || product.id,
+        sku: existing.sku || product.sku,
+        meliId: product.meliId || existing.meliId,
+        affiliateUrl: product.affiliateUrl || existing.affiliateUrl,
+        tags: [...new Set([...(existing.tags || []), ...(product.tags || [])])],
+        categoryTags: [...new Set([...(existing.categoryTags || []), ...(product.categoryTags || [])])]
+      });
+    } else {
+      productsByKey.set(key, { ...product, order: product.order || productCatalog.length + index + 1 });
+    }
+  });
+
+  return [...productsByKey.values()].sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+}
+
+function getCatalogKey(product) {
+  return product.meliId ? `meli:${getMeliId(product)}` : `sku:${product.sku}`;
+}
+
+async function readImportedProducts() {
+  try {
+    const raw = await fs.readFile(importedProductsFile, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed.products) ? parsed.products : [];
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function writeImportedProducts(products) {
+  await fs.mkdir(path.dirname(importedProductsFile), { recursive: true });
+  await fs.writeFile(importedProductsFile, `${JSON.stringify({ products }, null, 2)}\n`);
+}
+
+function buildImportedProduct({ existingProduct, mercadoLivreData, meliId, category, affiliateUrl, tags, featured }) {
+  const id = existingProduct?.id || `meli-${meliId.toLowerCase()}`;
+  const sku = existingProduct?.sku || `meli-${meliId}`;
+  const title = mercadoLivreData?.title || existingProduct?.name || meliId;
+  const productType = category || existingProduct?.productType || "Mercado Livre";
+  const categorySlug = slugify(category);
+
+  return {
+    id,
+    sku,
+    name: title,
+    meliId,
+    category,
+    categorySlug,
+    categoryTags: [categorySlug],
+    productType,
+    description: existingProduct?.description || title,
+    tags: [...new Set(tags)],
+    affiliateUrl,
+    price: mercadoLivreData?.price ?? existingProduct?.price ?? null,
+    oldPrice: mercadoLivreData?.oldPrice ?? existingProduct?.oldPrice ?? null,
+    featured: Boolean(featured),
+    importedFromMercadoLivre: true,
+    importedAt: new Date().toISOString()
+  };
+}
+
+function normalizeTags(tags) {
+  if (Array.isArray(tags)) return tags.map((tag) => String(tag).trim()).filter(Boolean);
+  if (typeof tags === "string") return tags.split(",").map((tag) => tag.trim()).filter(Boolean);
+  return [];
+}
+
+function upsertImportedProduct(products, product) {
+  const index = products.findIndex((item) => item.meliId === product.meliId || item.id === product.id);
+  if (index === -1) return [...products, product];
+  const nextProducts = [...products];
+  nextProducts[index] = { ...nextProducts[index], ...product, updatedAt: new Date().toISOString() };
+  return nextProducts;
+}
+
+function toRuntimeProduct(importedProduct, existingProduct) {
+  return {
+    ...(existingProduct || {}),
+    ...importedProduct,
+    images: existingProduct?.images || [],
+    heroImage: existingProduct?.heroImage || "/imagens/logo/logo.png",
+    available: existingProduct?.available ?? false,
+    dataSource: "manual",
+    syncStatus: "fallback"
+  };
+}
+
+function createPublicError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  error.publicMessage = message;
+  return error;
 }

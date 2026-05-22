@@ -2,6 +2,11 @@ import { Router } from "express";
 import { getProduct, getProducts, getProductSummary, refreshProductCache } from "../controllers/productController.js";
 import { receiveLead, receiveContact } from "../controllers/leadController.js";
 import {
+  forceRefreshMercadoLivreProducts,
+  getSyncReport,
+  importMercadoLivreProduct
+} from "../services/productService.js";
+import {
   exchangeCodeForToken,
   generateAuthorizationUrl,
   getConnectionStatus
@@ -59,6 +64,33 @@ router.get("/api/mercadolivre/item/:meliId", async (req, res, next) => {
   try {
     const result = await fetchMercadoLivreItemForTest(req.params.meliId);
     res.status(result.ok ? 200 : 404).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/admin/import-mercadolivre", async (req, res, next) => {
+  try {
+    const result = await importMercadoLivreProduct(req.body || {});
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/admin/products/refresh", async (_req, res, next) => {
+  try {
+    const result = await forceRefreshMercadoLivreProducts();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/api/admin/sync-report", async (_req, res, next) => {
+  try {
+    const report = await getSyncReport();
+    res.json({ ok: true, ...report });
   } catch (error) {
     next(error);
   }
