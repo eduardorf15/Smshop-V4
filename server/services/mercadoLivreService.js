@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getValidAccessToken, readSavedToken } from "./mercadoLivreAuthService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,7 +67,7 @@ function normalizeMeliId(value) {
 
 async function fetchMeliItem(meliId) {
   const response = await fetch(`https://api.mercadolibre.com/items/${encodeURIComponent(meliId)}`, {
-    headers: buildHeaders()
+    headers: await buildHeaders()
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const item = await response.json();
@@ -87,9 +88,36 @@ async function fetchMeliItem(meliId) {
   };
 }
 
-function buildHeaders() {
+export async function fetchMercadoLivreItemForTest(meliId) {
+  const accessToken = await getValidAccessToken();
+  const response = await fetch(`https://api.mercadolibre.com/items/${encodeURIComponent(meliId)}`, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+
+  if (!response.ok) throw new Error(`Mercado Livre retornou HTTP ${response.status}`);
+
+  const item = await response.json();
+  return {
+    id: item.id || null,
+    title: item.title || null,
+    price: numberOrNull(item.price),
+    original_price: numberOrNull(item.original_price),
+    available_quantity: Number(item.available_quantity || 0),
+    thumbnail: item.secure_thumbnail || item.thumbnail || null,
+    pictures: Array.isArray(item.pictures) ? item.pictures.map((picture) => picture.secure_url || picture.url).filter(Boolean) : [],
+    permalink: item.permalink || null
+  };
+}
+
+async function buildHeaders() {
   const headers = { Accept: "application/json" };
-  if (process.env.MERCADO_LIVRE_ACCESS_TOKEN) {
+  const savedToken = await readSavedToken();
+  if (savedToken?.refreshToken) {
+    headers.Authorization = `Bearer ${await getValidAccessToken()}`;
+  } else if (process.env.MERCADO_LIVRE_ACCESS_TOKEN) {
     headers.Authorization = `Bearer ${process.env.MERCADO_LIVRE_ACCESS_TOKEN}`;
   }
   return headers;

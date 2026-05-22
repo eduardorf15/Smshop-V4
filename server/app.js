@@ -67,9 +67,10 @@ app.use(pageRoutes);
 
 app.use((error, req, res, _next) => {
   console.error(error);
-  res.status(500).json({
+  const statusCode = Number(error.statusCode || 500);
+  res.status(statusCode).json({
     ok: false,
-    message: "Erro interno ao processar a solicitação."
+    message: error.publicMessage || "Erro interno ao processar a solicitação."
   });
 });
 

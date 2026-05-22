@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/app.js",
     "dev": "node --watch server/app.js",
-    "check": "node --check server/app.js && node --check server/services/productService.js && node --check src/js/main.js",
+    "check": "node --check server/app.js && node --check server/routes/apiRoutes.js && node --check server/services/productService.js && node --check server/services/mercadoLivreService.js && node --check server/services/mercadoLivreAuthService.js && node --check src/js/main.js",
     "products:check": "node src/api/check-products.js"
   },
   "keywords": [

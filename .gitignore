@@ -8,3 +8,4 @@ pm2.log
 logs/
 dist/
 .cache/
+server/storage/meli-tokens.json
