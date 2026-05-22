@@ -16,7 +16,7 @@ async function boot() {
   bindShellEvents();
   renderLoading(app);
   try {
-    products = await fetchProducts();
+    products = (await fetchProducts()).map(normalizeProductCategory);
     initModal(products);
     await route();
     updateFavoriteCount();
@@ -247,6 +247,35 @@ function sortProducts(list, sort) {
 
 function matchesCategory(product, categorySlug) {
   return product.categorySlug === categorySlug || product.productTypeSlug === categorySlug;
+}
+
+function normalizeProductCategory(product) {
+  const legacyTypes = new Set(["audio", "energia", "smartwatch", "creator"]);
+  const incomingCategorySlug = product.categorySlug || slugify(product.category || "");
+  const isLegacyCategory = legacyTypes.has(incomingCategorySlug);
+  const category = isLegacyCategory ? "Tecnologia" : product.category || "Tecnologia";
+  const categorySlug = isLegacyCategory || !product.categorySlug ? "tecnologia" : product.categorySlug;
+  const productType = product.productType || (isLegacyCategory ? product.category : "");
+  const productTypeSlug = product.productTypeSlug || (productType ? slugify(productType) : "");
+  const tags = new Set(["tecnologia", productTypeSlug, ...(product.tags || [])].filter(Boolean));
+
+  return {
+    ...product,
+    category,
+    categorySlug,
+    productType,
+    productTypeSlug,
+    tags: [...tags]
+  };
+}
+
+function slugify(value) {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
 }
 
 function setPageGalleryImage(index) {

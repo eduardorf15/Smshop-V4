@@ -45,7 +45,7 @@ export async function renderHome(app, products) {
         ${categories
           .map(
             (category) => `<a class="category-banner reveal" href="/produtos?category=${category.slug}" aria-label="Ver produtos de ${category.name}">
-              <img class="category-image" src="${category.image}" alt="${category.name}" loading="lazy" />
+              <img class="category-image" src="${category.image}" alt="${category.name}" width="1032" height="1524" loading="eager" decoding="async" />
               <span class="category-pill">${category.name}</span>
             </a>`
           )

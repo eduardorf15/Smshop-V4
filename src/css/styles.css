@@ -4909,6 +4909,7 @@ body {
   display: block !important;
   width: 100%;
   aspect-ratio: 1032 / 1524 !important;
+  height: auto !important;
   min-height: 0 !important;
   padding: 0 !important;
   overflow: hidden !important;
@@ -4943,6 +4944,12 @@ body {
   transform: scale(1.001);
   transition: transform 420ms cubic-bezier(0.2, 0.7, 0.2, 1), filter 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
   will-change: transform;
+}
+
+@supports not (aspect-ratio: 1 / 1) {
+  .category-showcase-grid .category-banner {
+    height: clamp(280px, 30vw, 430px) !important;
+  }
 }
 
 .category-showcase-grid .category-banner:hover .category-image {
@@ -5011,9 +5018,10 @@ body {
     gap: 0.9rem;
     overflow-x: auto;
     overflow-y: hidden;
-    padding: 0 max(9px, calc((100vw - var(--page)) / 2)) 0.35rem;
+    padding: 0 9px 0.35rem;
     scroll-snap-type: x mandatory;
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
 
   .category-showcase-grid.category-rail::-webkit-scrollbar {
@@ -5021,8 +5029,16 @@ body {
   }
 
   .category-showcase-grid .category-banner {
+    width: auto !important;
+    height: clamp(330px, 94vw, 520px) !important;
     border-radius: 20px !important;
+    flex: 0 0 auto;
     scroll-snap-align: start;
+  }
+
+  .category-showcase-grid .category-image {
+    min-width: 100%;
+    min-height: 100%;
   }
 
   .category-showcase-grid .category-pill {
