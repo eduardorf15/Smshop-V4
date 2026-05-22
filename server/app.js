@@ -65,6 +65,10 @@ app.use(
   express.static(path.join(rootDir, "fotosCategoria"), {
     maxAge: process.env.NODE_ENV === "production" ? "30d" : 0,
     immutable: process.env.NODE_ENV === "production"
+  }),
+  express.static(path.join(process.cwd(), "fotosCategoria"), {
+    maxAge: process.env.NODE_ENV === "production" ? "30d" : 0,
+    immutable: process.env.NODE_ENV === "production"
   })
 );
 
