@@ -57,8 +57,8 @@ router.get("/api/mercadolivre/status", async (_req, res, next) => {
 
 router.get("/api/mercadolivre/item/:meliId", async (req, res, next) => {
   try {
-    const item = await fetchMercadoLivreItemForTest(req.params.meliId);
-    res.json(item);
+    const result = await fetchMercadoLivreItemForTest(req.params.meliId);
+    res.status(result.ok ? 200 : 404).json(result);
   } catch (error) {
     next(error);
   }

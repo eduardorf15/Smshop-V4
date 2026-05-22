@@ -90,16 +90,52 @@ async function fetchMeliItem(meliId) {
 
 export async function fetchMercadoLivreItemForTest(meliId) {
   const accessToken = await getValidAccessToken();
-  const response = await fetch(`https://api.mercadolibre.com/items/${encodeURIComponent(meliId)}`, {
+  const itemResult = await fetchMeliResource("items", meliId, accessToken);
+  if (itemResult.ok) {
+    return {
+      ok: true,
+      type: "item",
+      data: mapItemResponse(itemResult.data)
+    };
+  }
+
+  if (shouldTryCatalogProduct(itemResult)) {
+    const productResult = await fetchMeliResource("products", meliId, accessToken);
+    if (productResult.ok) {
+      return {
+        ok: true,
+        type: "catalog_product",
+        data: mapCatalogProductResponse(productResult.data)
+      };
+    }
+
+    return buildNotFoundResponse(productResult);
+  }
+
+  return buildNotFoundResponse(itemResult);
+}
+
+async function fetchMeliResource(resource, meliId, accessToken) {
+  const response = await fetch(`https://api.mercadolibre.com/${resource}/${encodeURIComponent(meliId)}`, {
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${accessToken}`
     }
   });
+  const data = await response.json().catch(() => ({}));
 
-  if (!response.ok) throw new Error(`Mercado Livre retornou HTTP ${response.status}`);
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      details: summarizeMeliError(data, response.status)
+    };
+  }
 
-  const item = await response.json();
+  return { ok: true, status: response.status, data };
+}
+
+function mapItemResponse(item) {
   return {
     id: item.id || null,
     title: item.title || null,
@@ -110,6 +146,43 @@ export async function fetchMercadoLivreItemForTest(meliId) {
     pictures: Array.isArray(item.pictures) ? item.pictures.map((picture) => picture.secure_url || picture.url).filter(Boolean) : [],
     permalink: item.permalink || null
   };
+}
+
+function mapCatalogProductResponse(product) {
+  const buyBoxWinner = product.buy_box_winner || {};
+  const pictures = Array.isArray(product.pictures)
+    ? product.pictures.map((picture) => picture.secure_url || picture.url).filter(Boolean)
+    : [];
+
+  return {
+    id: product.id || null,
+    title: product.name || product.title || null,
+    price: numberOrNull(product.price || buyBoxWinner.price),
+    original_price: numberOrNull(product.original_price || buyBoxWinner.original_price),
+    available_quantity: Number(product.available_quantity || buyBoxWinner.available_quantity || 0),
+    thumbnail: product.thumbnail || buyBoxWinner.thumbnail || pictures[0] || null,
+    pictures,
+    permalink: product.permalink || null
+  };
+}
+
+function shouldTryCatalogProduct(result) {
+  if (result.status === 404) return true;
+  if (result.status !== 400) return false;
+  return /invalid|type|item|id|not found/i.test(result.details || "");
+}
+
+function buildNotFoundResponse(result) {
+  return {
+    ok: false,
+    message: "Produto não encontrado no Mercado Livre",
+    details: result.details || `HTTP ${result.status}`
+  };
+}
+
+function summarizeMeliError(data, status) {
+  const parts = [data.message, data.error, data.cause?.[0]?.message].filter(Boolean);
+  return parts.length ? parts.join(" | ") : `HTTP ${status}`;
 }
 
 async function buildHeaders() {
