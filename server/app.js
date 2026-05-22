@@ -1,4 +1,4 @@
-import path from "node:path";
+import path from "path";
 import { fileURLToPath } from "node:url";
 import compression from "compression";
 import express from "express";
@@ -60,17 +60,7 @@ app.use(
     immutable: process.env.NODE_ENV === "production"
   })
 );
-app.use(
-  "/fotosCategoria",
-  express.static(path.join(rootDir, "fotosCategoria"), {
-    maxAge: process.env.NODE_ENV === "production" ? "30d" : 0,
-    immutable: process.env.NODE_ENV === "production"
-  }),
-  express.static(path.join(process.cwd(), "fotosCategoria"), {
-    maxAge: process.env.NODE_ENV === "production" ? "30d" : 0,
-    immutable: process.env.NODE_ENV === "production"
-  })
-);
+app.use("/fotosCategoria", express.static(path.join(process.cwd(), "fotosCategoria")));
 
 app.use(apiRoutes);
 app.use(pageRoutes);
