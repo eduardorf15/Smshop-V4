@@ -259,9 +259,13 @@ function mergeProductData(product, mercadoLivreData) {
   }
 
   const images = mercadoLivreData.images?.length ? mercadoLivreData.images : product.images;
-  const hasMercadoLivrePrice = mercadoLivreData.price !== null && mercadoLivreData.price !== undefined;
-  const price = hasMercadoLivrePrice ? mercadoLivreData.price : product.price;
-  const oldPrice = mercadoLivreData.oldPrice ?? product.oldPrice;
+  const rawMercadoLivrePrice = mercadoLivreData.price;
+  const mlPrice = Number(rawMercadoLivrePrice);
+  const hasMercadoLivrePrice = Number.isFinite(mlPrice) && mlPrice > 0;
+  const price = hasMercadoLivrePrice ? mlPrice : product.price;
+  const rawMercadoLivreOldPrice = mercadoLivreData.oldPrice;
+  const mlOldPrice = Number(rawMercadoLivreOldPrice);
+  const oldPrice = Number.isFinite(mlOldPrice) && mlOldPrice > 0 ? mlOldPrice : product.oldPrice;
   const syncStatus = hasMercadoLivrePrice ? "synced" : mercadoLivreData.syncStatus || "partial";
   const dataSource = syncStatus === "synced" ? "mercadolivre" : "mercadolivre-partial";
   const discount = oldPrice && price ? Math.max(0, Math.round(((oldPrice - price) / oldPrice) * 100)) : product.discount;
@@ -273,14 +277,16 @@ function mergeProductData(product, mercadoLivreData) {
     `[ML PRICE BEFORE] ${JSON.stringify({
       id: product.id,
       localPrice: product.price,
-      mercadoLivrePrice: mercadoLivreData.price ?? null,
+      mercadoLivrePrice: rawMercadoLivrePrice ?? null,
       localOldPrice: product.oldPrice ?? null,
-      mercadoLivreOldPrice: mercadoLivreData.oldPrice ?? null
+      mercadoLivreOldPrice: rawMercadoLivreOldPrice ?? null
     })}`
   );
+  console.log(`[ML RAW PRICE] ${JSON.stringify({ id: product.id, value: rawMercadoLivrePrice ?? null, type: typeof rawMercadoLivrePrice })}`);
+  console.log(`[ML PARSED PRICE] ${JSON.stringify({ id: product.id, value: mlPrice, valid: hasMercadoLivrePrice })}`);
 
   console.log(
-    `[ML SYNC] Aplicando merge em ${product.id}: type=${mercadoLivreData.type || "unknown"} price=${hasMercadoLivrePrice ? mercadoLivreData.price : "fallback-manual"} dataSource=${dataSource} syncStatus=${syncStatus}`
+    `[ML SYNC] Aplicando merge em ${product.id}: type=${mercadoLivreData.type || "unknown"} price=${hasMercadoLivrePrice ? mlPrice : "fallback-manual"} dataSource=${dataSource} syncStatus=${syncStatus}`
   );
   if (product.id === "tech-001" && dataSource === "mercadolivre") {
     console.log("[ML SYNC] Produto tech-001 sincronizado");
@@ -318,6 +324,8 @@ function mergeProductData(product, mercadoLivreData) {
       syncStatus: mergedProduct.syncStatus
     })}`
   );
+  console.log(`[ML FINAL PRICE] ${JSON.stringify({ id: mergedProduct.id, price: mergedProduct.price, source: hasMercadoLivrePrice ? "mercadolivre" : "manual-fallback" })}`);
+  console.log(`[ML STATUS] ${JSON.stringify({ id: mergedProduct.id, dataSource: mergedProduct.dataSource, syncStatus: mergedProduct.syncStatus })}`);
 
   if (hasMercadoLivrePrice) {
     console.log(`[ML MERGE SUCCESS] ${product.id} price=${price} oldPrice=${oldPrice ?? "null"} source=${dataSource}`);
