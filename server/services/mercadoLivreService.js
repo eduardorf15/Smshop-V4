@@ -114,7 +114,7 @@ async function fetchMeliItem(meliId) {
   }
 
   if (shouldUseManualFallbackForItemAccessDenied(itemResult, meliId)) {
-    console.log(`[ML SYNC] /items/${meliId} retornou 403 access_denied; usando fallback manual parcial sem tentar /products.`);
+    console.log(`[ML SYNC] /items/${meliId} retornou 403; usando fallback manual parcial sem tentar /products.`);
     return buildItemAccessDeniedFallback(meliId, itemResult);
   }
 
@@ -148,7 +148,7 @@ export async function fetchMercadoLivreItemForTest(meliId) {
     return {
       ok: false,
       type: "item",
-      message: "Preço indisponível pela API; usando fallback manual",
+      message: "Preço indisponível pela API do Mercado Livre; usando preço manual",
       details: itemResult.details || `HTTP ${itemResult.status}`
     };
   }
@@ -436,8 +436,7 @@ function detectMercadoLivreIdKind(meliId) {
 
 function shouldUseManualFallbackForItemAccessDenied(result, meliId) {
   if (detectMercadoLivreIdKind(meliId) !== "item") return false;
-  if (result.status !== 403) return false;
-  return /access_denied|forbidden|denied|policy/i.test(result.details || "");
+  return result.status === 403;
 }
 
 function buildItemAccessDeniedFallback(meliId, result) {
@@ -457,7 +456,7 @@ function buildItemAccessDeniedFallback(meliId, result) {
     seller: null,
     fetchedAt: new Date().toISOString(),
     syncStatus: "partial",
-    syncWarning: "Preço indisponível pela API; usando fallback manual",
+    syncWarning: "Preço indisponível pela API do Mercado Livre; usando preço manual",
     warningDetails: result.details || `HTTP ${result.status}`
   };
 }
