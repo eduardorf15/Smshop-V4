@@ -93,7 +93,7 @@ export async function refreshProductsCache() {
   return result;
 }
 
-export async function importMercadoLivreProduct({ input, category = "Tecnologia", affiliateUrl, tags = [], featured = false }) {
+export async function importMercadoLivreProduct({ input, category = "Tecnologia", affiliateUrl, tags = [], featured = false, price = null }) {
   const meliId = extractMercadoLivreId(input);
   if (!meliId) {
     throw createPublicError("Informe uma URL ou ID válido do Mercado Livre.", 400);
@@ -105,6 +105,7 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
 
   const safeCategory = String(category || "Tecnologia");
   const safeTags = normalizeTags(tags);
+  const manualPrice = price === null || price === undefined || price === "" ? null : validateOptionalNumber(price, "price", { allowNull: false });
   const existingProducts = await buildManualProducts();
   const existingProduct = existingProducts.find((product) => product.meliId === meliId);
   const mercadoLivreData = await fetchMercadoLivreDataById(meliId, { force: true });
@@ -120,7 +121,8 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
     category: safeCategory,
     affiliateUrl,
     tags: safeTags,
-    featured
+    featured,
+    manualPrice
   });
   const nextImportedProducts = upsertImportedProduct(importedProducts, importedProduct);
 
@@ -522,7 +524,7 @@ async function writeImportedProducts(products) {
   await fs.writeFile(importedProductsFile, `${JSON.stringify({ products }, null, 2)}\n`);
 }
 
-function buildImportedProduct({ existingProduct, mercadoLivreData, meliId, category, affiliateUrl, tags, featured }) {
+function buildImportedProduct({ existingProduct, mercadoLivreData, meliId, category, affiliateUrl, tags, featured, manualPrice }) {
   const id = existingProduct?.id || `meli-${meliId.toLowerCase()}`;
   const sku = existingProduct?.sku || `meli-${meliId}`;
   const title = mercadoLivreData?.title || existingProduct?.name || meliId;
@@ -541,7 +543,7 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, meliId, categ
     description: existingProduct?.description || title,
     tags: [...new Set(tags)],
     affiliateUrl,
-    price: mercadoLivreData?.price ?? existingProduct?.price ?? null,
+    price: mercadoLivreData?.price ?? manualPrice ?? existingProduct?.price ?? null,
     oldPrice: mercadoLivreData?.oldPrice ?? existingProduct?.oldPrice ?? null,
     featured: Boolean(featured),
     importedFromMercadoLivre: true,
@@ -581,6 +583,22 @@ function validateManualProductUpdates(updates) {
       throw createPublicError("available deve ser booleano.", 400);
     }
     allowed.available = updates.available;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "featured")) {
+    if (typeof updates.featured !== "boolean") {
+      throw createPublicError("featured deve ser booleano.", 400);
+    }
+    allowed.featured = updates.featured;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "category")) {
+    const category = String(updates.category || "").trim();
+    if (!category) throw createPublicError("category não pode ficar vazio.", 400);
+    allowed.category = category;
+    allowed.categorySlug = slugify(category);
+    allowed.categoryTags = [allowed.categorySlug];
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "tags")) {
+    allowed.tags = normalizeTags(updates.tags);
   }
 
   return allowed;

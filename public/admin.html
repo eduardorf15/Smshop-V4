@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow" />
+    <meta name="theme-color" content="#050816" />
+    <link rel="icon" href="/imagens/logo/logo.png" />
+    <link rel="stylesheet" href="/public/admin.css" />
+    <title>Admin SMShop</title>
+  </head>
+  <body>
+    <main class="admin-shell">
+      <section class="login-panel" data-login-panel>
+        <img src="/imagens/logo/logo.png" alt="SMShop" />
+        <h1>Admin SMShop</h1>
+        <p>Entre para importar produtos e editar dados manuais com segurança.</p>
+        <form data-login-form>
+          <label>
+            Senha
+            <input type="password" name="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">Entrar</button>
+        </form>
+      </section>
+
+      <section class="dashboard" data-dashboard hidden>
+        <header class="admin-header">
+          <div>
+            <span>Painel interno</span>
+            <h1>Catálogo SMShop</h1>
+          </div>
+          <button type="button" class="ghost-button" data-logout>Sair</button>
+        </header>
+
+        <div class="status-bar" data-status>Pronto.</div>
+
+        <section class="admin-grid">
+          <form class="admin-card import-card" data-import-form>
+            <div class="section-heading">
+              <span>Mercado Livre</span>
+              <h2>Importar produto</h2>
+            </div>
+            <label>
+              URL do Mercado Livre ou MLB ID
+              <input name="input" placeholder="https://... ou MLB6419155018" required />
+            </label>
+            <label>
+              Link afiliado
+              <input name="affiliateUrl" placeholder="https://meli.la/seu-link" required />
+            </label>
+            <div class="two-columns">
+              <label>
+                Categoria
+                <input name="category" value="Tecnologia" required />
+              </label>
+              <label>
+                Preço manual opcional
+                <input name="price" type="number" min="0" step="0.01" placeholder="166.66" />
+              </label>
+            </div>
+            <label>
+              Tags
+              <input name="tags" placeholder="tecnologia, smartwatch" />
+            </label>
+            <label class="check-row">
+              <input name="featured" type="checkbox" />
+              Destaque
+            </label>
+            <button type="submit">Importar produto</button>
+          </form>
+
+          <form class="admin-card edit-card" data-edit-form hidden>
+            <div class="section-heading">
+              <span data-edit-id>Produto</span>
+              <h2>Edição rápida</h2>
+            </div>
+            <label>
+              Link afiliado
+              <input name="affiliateUrl" required />
+            </label>
+            <div class="two-columns">
+              <label>
+                Preço
+                <input name="price" type="number" min="0" step="0.01" required />
+              </label>
+              <label>
+                Preço antigo
+                <input name="oldPrice" type="number" min="0" step="0.01" />
+              </label>
+            </div>
+            <label>
+              Categoria
+              <input name="category" required />
+            </label>
+            <label>
+              Tags
+              <input name="tags" />
+            </label>
+            <div class="toggle-grid">
+              <label class="check-row">
+                <input name="available" type="checkbox" />
+                Disponível
+              </label>
+              <label class="check-row">
+                <input name="featured" type="checkbox" />
+                Destaque
+              </label>
+            </div>
+            <div class="button-row">
+              <button type="submit">Salvar alterações</button>
+              <button type="button" class="ghost-button" data-cancel-edit>Cancelar</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="products-section">
+          <div class="section-heading list-heading">
+            <div>
+              <span>Produtos cadastrados</span>
+              <h2>Catálogo atual</h2>
+            </div>
+            <button type="button" class="ghost-button" data-refresh>Atualizar</button>
+          </div>
+          <div class="products-list" data-products-list></div>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="/public/admin.js"></script>
+  </body>
+</html>

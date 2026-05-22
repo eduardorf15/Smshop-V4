@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { getProduct, getProducts, getProductSummary, refreshProductCache } from "../controllers/productController.js";
 import { receiveLead, receiveContact } from "../controllers/leadController.js";
+import { loginAdmin, requireAdminAuth } from "../services/adminAuthService.js";
 import {
   forceRefreshMercadoLivreProducts,
   getSyncReport,
@@ -69,6 +70,16 @@ router.get("/api/mercadolivre/item/:meliId", async (req, res, next) => {
     next(error);
   }
 });
+
+router.post("/api/admin/login", (req, res, next) => {
+  try {
+    res.json({ ok: true, ...loginAdmin(req.body?.password) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.use("/api/admin", requireAdminAuth);
 
 router.post("/api/admin/import-mercadolivre", async (req, res, next) => {
   try {

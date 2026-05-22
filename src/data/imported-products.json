@@ -3,12 +3,24 @@
     {
       "id": "tech-001",
       "sku": "001",
-      "manualDataUpdatedAt": "2026-05-22T22:20:34.918Z",
+      "manualDataUpdatedAt": "2026-05-22T22:36:20.633Z",
       "affiliateUrl": "https://meli.la/33M7VRW",
       "price": 166.66,
       "oldPrice": null,
       "available": true,
-      "meliId": "MLB66266661"
+      "meliId": "MLB66266661",
+      "featured": true,
+      "category": "Tecnologia",
+      "categorySlug": "tecnologia",
+      "categoryTags": [
+        "tecnologia"
+      ],
+      "tags": [
+        "smartwatch",
+        "outdoor",
+        "treino"
+      ],
+      "updatedAt": "2026-05-22T22:36:20.633Z"
     }
   ]
 }

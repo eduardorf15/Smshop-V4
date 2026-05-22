@@ -10,6 +10,9 @@ const router = Router();
 
 router.get("/robots.txt", getRobots);
 router.get("/sitemap.xml", getSitemap);
+router.get("/admin", (_req, res) => {
+  res.sendFile(path.join(rootDir, "public", "admin.html"));
+});
 router.get(["/", "/produtos", "/categoria/tecnologia", "/favoritos", "/ofertas", "/contato", "/sobre", "/politica", "/termos", "/produto/:id"], (_req, res) => {
   res.sendFile(path.join(rootDir, "public", "index.html"));
 });
