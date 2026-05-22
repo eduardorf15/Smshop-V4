@@ -36,7 +36,7 @@ async function route() {
   const tag = params.get("tag");
   let visibleProducts = [...products];
 
-  if (category) visibleProducts = visibleProducts.filter((product) => product.categorySlug === category);
+  if (category) visibleProducts = visibleProducts.filter((product) => matchesCategory(product, category));
   if (tag) visibleProducts = visibleProducts.filter((product) => product.tags.join(" ").toLowerCase().includes(tag.toLowerCase()));
   if (path === "/categoria/tecnologia") visibleProducts = products;
 
@@ -125,11 +125,11 @@ function bindPageEvents() {
   if (search || sortTrigger) {
     const update = debounce(() => {
       const term = (search?.value || "").toLowerCase();
-      let list = products.filter((product) => `${product.name} ${product.category} ${product.tags.join(" ")}`.toLowerCase().includes(term));
+      let list = products.filter((product) => `${product.name} ${product.category} ${product.productType || ""} ${product.tags.join(" ")}`.toLowerCase().includes(term));
       const params = new URLSearchParams(window.location.search);
       const category = params.get("category");
       const tag = params.get("tag");
-      if (category) list = list.filter((product) => product.categorySlug === category);
+      if (category) list = list.filter((product) => matchesCategory(product, category));
       if (tag) list = list.filter((product) => product.tags.join(" ").toLowerCase().includes(tag.toLowerCase()));
       if (window.location.pathname === "/categoria/tecnologia") list = list.filter((product) => product.categorySlug);
       list = sortProducts(list, sortTrigger?.dataset.sortValue || "");
@@ -196,7 +196,7 @@ function bindSearch() {
     "input",
     debounce(() => {
       const term = input.value.toLowerCase();
-      const matches = products.filter((product) => `${product.name} ${product.category}`.toLowerCase().includes(term)).slice(0, 6);
+      const matches = products.filter((product) => `${product.name} ${product.category} ${product.productType || ""}`.toLowerCase().includes(term)).slice(0, 6);
       results.innerHTML = matches.map((product) => productCard(product, { compact: true })).join("");
     }, 180)
   );
@@ -243,6 +243,10 @@ function sortProducts(list, sort) {
   if (sort === "discount") sorted.sort((a, b) => Number(b.onOffer) - Number(a.onOffer));
   if (sort === "rating") sorted.sort((a, b) => b.rating - a.rating);
   return sorted;
+}
+
+function matchesCategory(product, categorySlug) {
+  return product.categorySlug === categorySlug || product.productTypeSlug === categorySlug;
 }
 
 function setPageGalleryImage(index) {

@@ -37,12 +37,14 @@ export async function renderHome(app, products) {
       <div class="home-rail product-rail product-rail--noir">${products.slice(0, 5).map((product) => productCard(product, { noir: true })).join("")}</div>
     </section>
 
-    <section class="rail-section">
-      ${sectionHeader("Categorias", "Escolha o que combina com você.", "Tecnologia, acessórios e itens do dia a dia organizados do jeito mais fácil de explorar.")}
-      <div class="home-rail category-rail">
+    <section class="rail-section category-showcase-section">
+      <div class="category-showcase-header reveal">
+        <span class="eyebrow">Categorias</span>
+      </div>
+      <div class="category-showcase-grid category-rail">
         ${categories
           .map(
-            (category) => `<a class="category-card category-banner reveal" href="/produtos?category=${category.slug}">
+            (category) => `<a class="category-banner reveal" href="/produtos?category=${category.slug}" aria-label="Ver produtos de ${category.name}">
               <img class="category-image" src="${category.image}" alt="${category.name}" loading="lazy" />
               <span class="category-pill">${category.name}</span>
             </a>`
@@ -273,13 +275,13 @@ export function renderLoading(app) {
 
 function buildHomeCategories() {
   return [
-    { name: "Tecnologia", slug: "tecnologia", image: "/imagens/tecnologia/001/001.webp" },
-    { name: "Beleza e estética", slug: "beleza-estetica", image: "/imagens/tecnologia/005/01.webp" },
-    { name: "Fitness", slug: "fitness", image: "/imagens/tecnologia/002/01.webp" },
-    { name: "Moda", slug: "moda", image: "/imagens/tecnologia/020/01.webp" },
-    { name: "Casa", slug: "casa", image: "/imagens/tecnologia/015/01.webp" },
-    { name: "Pets", slug: "pets", image: "/imagens/tecnologia/012/01.webp" },
-    { name: "Infantil", slug: "infantil", image: "/imagens/tecnologia/003/01.webp" }
+    { name: "Tecnologia", slug: "tecnologia", image: "/fotosCategoria/tecnologia.png" },
+    { name: "Beleza e estética", slug: "beleza-estetica", image: "/fotosCategoria/beleza.png" },
+    { name: "Fitness e saúde", slug: "fitness", image: "/fotosCategoria/fitness.png" },
+    { name: "Moda", slug: "moda", image: "/fotosCategoria/moda.png" },
+    { name: "Casa", slug: "casa", image: "/fotosCategoria/casa.png" },
+    { name: "Pets", slug: "pets", image: "/fotosCategoria/pets.png" },
+    { name: "Infantil", slug: "infantil", image: "/fotosCategoria/infantil.png" }
   ];
 }
 
@@ -289,7 +291,7 @@ function getRelatedProducts(products, product) {
     .map((item) => ({
       item,
       score:
-        (item.category === product.category ? 100 : 0) +
+        (item.productType && item.productType === product.productType ? 100 : item.category === product.category ? 40 : 0) +
         item.tags.filter((tag) => product.tags.includes(tag)).length * 24 -
         Math.abs(item.price - product.price) / 10
     }))

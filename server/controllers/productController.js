@@ -7,7 +7,8 @@ export async function getProducts(req, res, next) {
     let filtered = [...products];
 
     if (category) {
-      filtered = filtered.filter((product) => product.categorySlug === String(category));
+      const categorySlug = String(category);
+      filtered = filtered.filter((product) => product.categorySlug === categorySlug || product.productTypeSlug === categorySlug);
     }
 
     if (featured === "true") {
@@ -21,7 +22,7 @@ export async function getProducts(req, res, next) {
     if (q) {
       const term = String(q).toLowerCase();
       filtered = filtered.filter((product) => {
-        return `${product.name} ${product.category} ${product.tags.join(" ")}`.toLowerCase().includes(term);
+        return `${product.name} ${product.category} ${product.productType} ${product.tags.join(" ")}`.toLowerCase().includes(term);
       });
     }
 
@@ -40,10 +41,12 @@ export async function getProductSummary(_req, res, next) {
   try {
     const products = await listProducts();
     const categories = [...new Set(products.map((product) => product.category))];
+    const productTypes = [...new Set(products.map((product) => product.productType))];
     res.json({
       ok: true,
       total: products.length,
       categories,
+      productTypes,
       offers: products.filter((product) => product.onOffer).length,
       featured: products.filter((product) => product.featured).length
     });

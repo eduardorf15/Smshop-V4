@@ -33,6 +33,9 @@ export async function listProducts() {
       const catalog = productCatalog.find((product) => product.sku === folder);
       const price = catalog.price;
       const category = catalog.category;
+      const categorySlug = catalog.categorySlug || slugify(category);
+      const productType = catalog.productType || category;
+      const productTypeSlug = slugify(productType);
 
       return {
         id: `tech-${folder}`,
@@ -40,7 +43,9 @@ export async function listProducts() {
         order: index + 1,
         name: catalog.name,
         category,
-        categorySlug: slugify(category),
+        categorySlug,
+        productType,
+        productTypeSlug,
         description: catalog.description,
         images,
         heroImage: images[0] || "/imagens/logo/logo.png",
@@ -54,7 +59,7 @@ export async function listProducts() {
         onOffer: index < 8 || index % 4 === 0,
         featured: index < 10 || index % 6 === 0,
         badge: badgeFor(index),
-        tags: catalog.tags
+        tags: [...new Set([...(catalog.categoryTags || []), productTypeSlug, ...catalog.tags])]
       };
     })
   );

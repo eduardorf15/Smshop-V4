@@ -4878,3 +4878,163 @@ body {
     padding-inline: 0.38rem;
   }
 }
+
+/* Editorial category showcase */
+.category-showcase-section {
+  padding-top: clamp(3rem, 5vw, 5.5rem);
+}
+
+.category-showcase-header {
+  margin-bottom: clamp(1rem, 2vw, 1.6rem);
+}
+
+.category-showcase-header .eyebrow {
+  color: var(--text-muted);
+}
+
+.category-showcase-grid.category-rail {
+  display: grid;
+  grid-auto-flow: initial;
+  grid-auto-columns: initial;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: clamp(0.8rem, 1.25vw, 1.35rem);
+  overflow: visible;
+  padding: 0;
+  margin: 0;
+  scroll-snap-type: none;
+}
+
+.category-showcase-grid .category-banner {
+  position: relative !important;
+  display: block !important;
+  width: 100%;
+  aspect-ratio: 1032 / 1524 !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: 0 !important;
+  border-radius: 18px !important;
+  background: transparent !important;
+  color: inherit !important;
+  box-shadow: none !important;
+  isolation: isolate;
+  transform: translateZ(0);
+  transition: transform 220ms ease, filter 220ms ease;
+}
+
+.category-showcase-grid .category-banner::before,
+.category-showcase-grid .category-banner::after {
+  display: none !important;
+  content: none !important;
+}
+
+.category-showcase-grid .category-banner:hover {
+  box-shadow: none !important;
+  filter: brightness(1.045);
+  transform: translateY(-3px);
+}
+
+.category-showcase-grid .category-image {
+  display: block !important;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  transform: scale(1.001);
+  transition: transform 420ms cubic-bezier(0.2, 0.7, 0.2, 1), filter 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  will-change: transform;
+}
+
+.category-showcase-grid .category-banner:hover .category-image {
+  filter: saturate(1.04) contrast(1.03);
+  transform: scale(1.045);
+}
+
+.category-showcase-grid .category-pill {
+  position: absolute !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: clamp(0.75rem, 1.3vw, 1.05rem) !important;
+  z-index: 2 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  max-width: calc(100% - 1.2rem);
+  min-height: 36px !important;
+  padding: 0.58rem 0.9rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.34) !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.76) !important;
+  color: #07080b !important;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.14) !important;
+  backdrop-filter: blur(14px) saturate(1.2);
+  font-size: clamp(0.72rem, 0.78vw, 0.86rem) !important;
+  font-weight: 820 !important;
+  line-height: 1.05;
+  letter-spacing: 0 !important;
+  text-align: center;
+  text-transform: none !important;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  transition: background 220ms ease, transform 220ms ease, box-shadow 220ms ease;
+}
+
+.category-showcase-grid .category-banner:hover .category-pill {
+  background: rgba(255, 255, 255, 0.88) !important;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.18) !important;
+  transform: translateX(-50%) translateY(-2px);
+}
+
+@media (max-width: 1180px) {
+  .category-showcase-grid.category-rail {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .category-showcase-section {
+    width: 100%;
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+  }
+
+  .category-showcase-header {
+    width: var(--page);
+    margin-inline: auto;
+  }
+
+  .category-showcase-grid.category-rail {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(230px, 64vw);
+    grid-template-columns: none;
+    gap: 0.9rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 max(9px, calc((100vw - var(--page)) / 2)) 0.35rem;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+
+  .category-showcase-grid.category-rail::-webkit-scrollbar {
+    display: none;
+  }
+
+  .category-showcase-grid .category-banner {
+    border-radius: 20px !important;
+    scroll-snap-align: start;
+  }
+
+  .category-showcase-grid .category-pill {
+    min-height: 38px !important;
+    padding: 0.62rem 1rem !important;
+    font-size: 0.86rem !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .category-showcase-grid.category-rail {
+    grid-auto-columns: minmax(220px, 72vw);
+    gap: 0.8rem;
+  }
+}

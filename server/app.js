@@ -60,6 +60,13 @@ app.use(
     immutable: process.env.NODE_ENV === "production"
   })
 );
+app.use(
+  "/fotosCategoria",
+  express.static(path.join(rootDir, "fotosCategoria"), {
+    maxAge: process.env.NODE_ENV === "production" ? "30d" : 0,
+    immutable: process.env.NODE_ENV === "production"
+  })
+);
 
 app.use(apiRoutes);
 app.use(pageRoutes);
