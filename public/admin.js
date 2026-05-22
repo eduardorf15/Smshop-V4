@@ -1,6 +1,7 @@
 const tokenKey = "smshopAdminToken";
 const state = {
   products: [],
+  syncReport: null,
   editingId: null
 };
 
@@ -16,13 +17,13 @@ const editId = document.querySelector("[data-edit-id]");
 loginForm.addEventListener("submit", handleLogin);
 importForm.addEventListener("submit", handleImport);
 editForm.addEventListener("submit", handleEditSave);
-document.querySelector("[data-refresh]").addEventListener("click", loadProducts);
+document.querySelector("[data-refresh]").addEventListener("click", loadDashboardData);
 document.querySelector("[data-logout]").addEventListener("click", logout);
 document.querySelector("[data-cancel-edit]").addEventListener("click", closeEdit);
 
 if (getToken()) {
   showDashboard();
-  loadProducts();
+  loadDashboardData();
 }
 
 async function handleLogin(event) {
@@ -30,14 +31,14 @@ async function handleLogin(event) {
   setBusy(loginForm, true);
   try {
     const password = new FormData(loginForm).get("password");
-    const data = await requestJson("/api/admin/login", {
+    const data = await apiFetch("/api/admin/login", {
       method: "POST",
       body: JSON.stringify({ password })
     });
     sessionStorage.setItem(tokenKey, data.token);
     loginForm.reset();
     showDashboard();
-    await loadProducts();
+    await loadDashboardData();
     setStatus("Login realizado.", "ok");
   } catch (error) {
     setStatus(error.message, "error");
@@ -61,7 +62,7 @@ async function handleImport(event) {
     };
     if (price !== null && String(price).trim() !== "") payload.price = Number(price);
 
-    const data = await adminRequest("/api/admin/import-mercadolivre", {
+    const data = await apiFetch("/api/admin/import-mercadolivre", {
       method: "POST",
       body: JSON.stringify(payload)
     });
@@ -94,7 +95,7 @@ async function handleEditSave(event) {
       tags: splitTags(form.get("tags"))
     };
 
-    const data = await adminRequest(`/api/admin/products/${encodeURIComponent(state.editingId)}/manual-data`, {
+    const data = await apiFetch(`/api/admin/products/${encodeURIComponent(state.editingId)}/manual-data`, {
       method: "PATCH",
       body: JSON.stringify(payload)
     });
@@ -110,10 +111,24 @@ async function handleEditSave(event) {
 
 async function loadProducts() {
   setStatus("Carregando produtos...");
-  const data = await requestJson("/api/products");
+  const data = await apiFetch("/api/products");
   state.products = Array.isArray(data.products) ? data.products : [];
   renderProducts();
   setStatus(`${state.products.length} produtos carregados.`, "ok");
+}
+
+async function loadDashboardData() {
+  await loadProducts();
+  await loadSyncReport();
+}
+
+async function loadSyncReport() {
+  const report = await apiFetch("/api/admin/sync-report");
+  state.syncReport = report;
+  setStatus(
+    `${state.products.length} produtos carregados. Sync: ${report.synced || 0} sincronizados, ${report.partial || 0} parciais, ${report.error || 0} com erro.`,
+    "ok"
+  );
 }
 
 function renderProducts() {
@@ -174,21 +189,13 @@ function logout() {
   setStatus("Sessão encerrada.");
 }
 
-async function adminRequest(url, options = {}) {
-  return requestJson(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${getToken()}`,
-      ...(options.headers || {})
-    }
-  });
-}
-
-async function requestJson(url, options = {}) {
+async function apiFetch(url, options = {}) {
+  const token = getToken();
   const response = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { "x-admin-token": token } : {}),
       ...(options.headers || {})
     }
   });
