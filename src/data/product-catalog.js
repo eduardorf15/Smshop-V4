@@ -2,8 +2,10 @@ const defaultCategoryName = "Tecnologia";
 
 const rawProductCatalog = [
   {
+    id: "tech-001",
     sku: "001",
     name: "Smartwatch Aurafit Trek 2",
+    meliId: "MLB66266661",
     price: 351.96,
     productType: "Smartwatch",
     description: "Relogio outdoor com proposta robusta para trilhas, treinos e rotina ativa, com leitura clara e visual esportivo premium.",

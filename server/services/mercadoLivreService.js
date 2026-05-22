@@ -66,31 +66,23 @@ function normalizeMeliId(value) {
 }
 
 async function fetchMeliItem(meliId) {
-  const response = await fetch(`https://api.mercadolibre.com/items/${encodeURIComponent(meliId)}`, {
-    headers: await buildHeaders()
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const item = await response.json();
+  const headers = await buildHeaders();
+  const itemResult = await fetchMeliResource("items", meliId, headers);
+  if (itemResult.ok) return normalizeMeliItem(meliId, itemResult.data);
 
-  return {
-    meliId,
-    title: item.title || null,
-    price: numberOrNull(item.price),
-    oldPrice: numberOrNull(item.original_price),
-    currency: item.currency_id || "BRL",
-    heroImage: bestPicture(item),
-    images: Array.isArray(item.pictures) ? item.pictures.map((picture) => picture.secure_url || picture.url).filter(Boolean) : [],
-    available: item.status === "active" && Number(item.available_quantity || 0) > 0,
-    stock: Number(item.available_quantity || 0),
-    soldQuantity: Number(item.sold_quantity || 0),
-    permalink: item.permalink || null,
-    fetchedAt: new Date().toISOString()
-  };
+  if (shouldTryCatalogProduct(itemResult)) {
+    const productResult = await fetchMeliResource("products", meliId, headers);
+    if (productResult.ok) return normalizeMeliCatalogProduct(meliId, productResult.data);
+    throw new Error(productResult.details || `HTTP ${productResult.status}`);
+  }
+
+  throw new Error(itemResult.details || `HTTP ${itemResult.status}`);
 }
 
 export async function fetchMercadoLivreItemForTest(meliId) {
   const accessToken = await getValidAccessToken();
-  const itemResult = await fetchMeliResource("items", meliId, accessToken);
+  const headers = buildAuthorizedHeaders(accessToken);
+  const itemResult = await fetchMeliResource("items", meliId, headers);
   if (itemResult.ok) {
     return {
       ok: true,
@@ -100,7 +92,7 @@ export async function fetchMercadoLivreItemForTest(meliId) {
   }
 
   if (shouldTryCatalogProduct(itemResult)) {
-    const productResult = await fetchMeliResource("products", meliId, accessToken);
+    const productResult = await fetchMeliResource("products", meliId, headers);
     if (productResult.ok) {
       return {
         ok: true,
@@ -115,12 +107,9 @@ export async function fetchMercadoLivreItemForTest(meliId) {
   return buildNotFoundResponse(itemResult);
 }
 
-async function fetchMeliResource(resource, meliId, accessToken) {
+async function fetchMeliResource(resource, meliId, headers) {
   const response = await fetch(`https://api.mercadolibre.com/${resource}/${encodeURIComponent(meliId)}`, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`
-    }
+    headers
   });
   const data = await response.json().catch(() => ({}));
 
@@ -133,6 +122,49 @@ async function fetchMeliResource(resource, meliId, accessToken) {
   }
 
   return { ok: true, status: response.status, data };
+}
+
+function normalizeMeliItem(meliId, item) {
+  return {
+    meliId,
+    type: "item",
+    title: item.title || null,
+    price: numberOrNull(item.price),
+    oldPrice: numberOrNull(item.original_price),
+    currency: item.currency_id || "BRL",
+    heroImage: bestPicture(item),
+    images: getPictures(item),
+    available: item.status === "active" && Number(item.available_quantity || 0) > 0,
+    status: item.status || null,
+    stock: Number(item.available_quantity || 0),
+    soldQuantity: Number(item.sold_quantity || 0),
+    permalink: item.permalink || null,
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+function normalizeMeliCatalogProduct(meliId, product) {
+  const buyBoxWinner = product.buy_box_winner || {};
+  const pictures = getPictures(product);
+  const stock = Number(product.available_quantity || buyBoxWinner.available_quantity || 0);
+  const status = product.status || buyBoxWinner.status || null;
+
+  return {
+    meliId,
+    type: "catalog_product",
+    title: product.name || product.title || null,
+    price: numberOrNull(product.price ?? buyBoxWinner.price),
+    oldPrice: numberOrNull(product.original_price ?? buyBoxWinner.original_price),
+    currency: product.currency_id || buyBoxWinner.currency_id || "BRL",
+    heroImage: product.thumbnail || buyBoxWinner.thumbnail || pictures[0] || null,
+    images: pictures,
+    available: status ? status === "active" : stock > 0,
+    status,
+    stock,
+    soldQuantity: Number(product.sold_quantity || buyBoxWinner.sold_quantity || 0),
+    permalink: product.permalink || null,
+    fetchedAt: new Date().toISOString()
+  };
 }
 
 function mapItemResponse(item) {
@@ -196,11 +228,22 @@ async function buildHeaders() {
   return headers;
 }
 
+function buildAuthorizedHeaders(accessToken) {
+  return {
+    Accept: "application/json",
+    Authorization: `Bearer ${accessToken}`
+  };
+}
+
 function bestPicture(item) {
   if (Array.isArray(item.pictures) && item.pictures[0]) {
     return item.pictures[0].secure_url || item.pictures[0].url || null;
   }
   return item.secure_thumbnail || item.thumbnail || null;
+}
+
+function getPictures(item) {
+  return Array.isArray(item.pictures) ? item.pictures.map((picture) => picture.secure_url || picture.url).filter(Boolean) : [];
 }
 
 function numberOrNull(value) {

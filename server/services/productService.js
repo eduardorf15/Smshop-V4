@@ -11,6 +11,9 @@ const rootDir = path.resolve(__dirname, "../..");
 const productRoot = path.join(rootDir, "imagens", "tecnologia");
 const imageExt = new Set([".webp", ".png", ".jpg", ".jpeg", ".avif"]);
 const productCacheTtlMs = Number(process.env.PRODUCT_CACHE_TTL_MS || process.env.MELI_CACHE_TTL_MS || 6 * 60 * 60 * 1000);
+const productMeliIds = {
+  "tech-001": "MLB66266661"
+};
 let cache;
 let cacheFetchedAt = 0;
 
@@ -64,10 +67,11 @@ async function buildManualProducts() {
       const categorySlug = catalog.categorySlug || slugify(category);
       const productType = catalog.productType || category;
       const productTypeSlug = slugify(productType);
+      const id = catalog.id || `tech-${folder}`;
       if (!affiliateUrl) console.warn(`[SMShop] Produto ${folder} sem link afiliado cadastrado.`);
 
       return {
-        id: `tech-${folder}`,
+        id,
         sku: folder,
         order: index + 1,
         name: catalog.name,
@@ -75,7 +79,7 @@ async function buildManualProducts() {
         categorySlug,
         productType,
         productTypeSlug,
-        meliId: getMeliId(catalog),
+        meliId: productMeliIds[id] || getMeliId(catalog),
         meliUrl: catalog.meliUrl || null,
         description: catalog.description,
         images,
@@ -114,11 +118,13 @@ function mergeProductData(product, mercadoLivreData) {
     images,
     heroImage: mercadoLivreData.heroImage || images[0] || product.heroImage,
     available: mercadoLivreData.available ?? product.available,
+    meliType: mercadoLivreData.type || null,
+    meliStatus: mercadoLivreData.status || null,
     stock: mercadoLivreData.stock ?? product.stock ?? null,
     soldQuantity: mercadoLivreData.soldQuantity ?? product.soldQuantity ?? null,
     mercadoLivrePermalink: mercadoLivreData.permalink || null,
     syncedAt: mercadoLivreData.fetchedAt,
-    dataSource: "mercado-livre-cache"
+    dataSource: "mercadolivre"
   };
 }
 
