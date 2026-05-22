@@ -102,14 +102,15 @@ function normalizeMeliId(value) {
 
 async function fetchMeliItem(meliId) {
   const headers = await buildHeaders();
-  console.log(`[ML SYNC] Tentando endpoint /items/${meliId}`);
+  const idKind = detectMercadoLivreIdKind(meliId);
+  console.log(`[ML SYNC] ID ${meliId} detectado como ${idKind}; tentando endpoint /items/${meliId}`);
   const itemResult = await fetchMeliResource(`items/${encodeURIComponent(meliId)}`, headers);
   if (itemResult.ok) {
     console.log(`[ML SYNC] /items/${meliId} encontrado.`);
     return normalizeMeliItem(meliId, itemResult.data);
   }
 
-  if (shouldTryCatalogProduct(itemResult)) {
+  if (shouldTryCatalogProduct(itemResult, meliId)) {
     console.log(`[ML SYNC] /items/${meliId} falhou (${itemResult.details}); tentando /products/${meliId}`);
     const productResult = await fetchMeliResource(`products/${encodeURIComponent(meliId)}`, headers);
     if (productResult.ok) {
@@ -135,7 +136,7 @@ export async function fetchMercadoLivreItemForTest(meliId) {
     };
   }
 
-  if (shouldTryCatalogProduct(itemResult)) {
+  if (shouldTryCatalogProduct(itemResult, meliId)) {
     const productResult = await fetchMeliResource(`products/${encodeURIComponent(meliId)}`, headers);
     if (productResult.ok) {
       const offer = await resolveMercadoLivrePrice(meliId, productResult.data, headers);
@@ -204,11 +205,13 @@ function normalizeMeliItem(meliId, item) {
   const priceInfo = findMercadoLivrePrice(item);
   const price = extractMercadoLivrePrice(item);
   const oldPrice = extractOriginalPriceValue(item);
+  const seller = normalizeSeller(item.seller || item.seller_info || item.seller_id);
   console.log(
     `[ML RAW PRICE] ${JSON.stringify({
       id: meliId,
       source: "item",
       price: item.price ?? null,
+      original_price: item.original_price ?? null,
       sale_price: item.sale_price ?? null,
       installments: item.installments ?? null,
       variations: summarizeVariationPrices(item.variations)
@@ -230,6 +233,7 @@ function normalizeMeliItem(meliId, item) {
     stock,
     soldQuantity: Number(item.sold_quantity || 0),
     permalink: item.permalink || null,
+    seller,
     fetchedAt: new Date().toISOString(),
     syncStatus: price === null ? "partial" : "synced"
   };
@@ -396,11 +400,21 @@ function extractOffers(data) {
   return [];
 }
 
-function shouldTryCatalogProduct(result) {
+function shouldTryCatalogProduct(result, meliId) {
+  if (detectMercadoLivreIdKind(meliId) === "item") {
+    console.log(`[ML SYNC] ${meliId} parece ser anúncio/item; não tentando /products/${meliId}.`);
+    return false;
+  }
   if (result.status === 404) return true;
-  if (result.status === 401 || result.status === 403) return /unauthorized|forbidden|policy/i.test(result.details || "");
+  if (result.status === 401 || result.status === 403) return false;
   if (result.status !== 400) return false;
   return /invalid|type|item|id|not found/i.test(result.details || "");
+}
+
+function detectMercadoLivreIdKind(meliId) {
+  const digits = String(meliId || "").replace(/\D/g, "");
+  if (digits.length >= 10) return "item";
+  return "catalog_product";
 }
 
 function normalizeOffer(offer, source) {

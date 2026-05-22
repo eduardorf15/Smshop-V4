@@ -276,7 +276,7 @@ function mergeProductData(product, mercadoLivreData) {
   const mlOldPrice = Number(rawMercadoLivreOldPrice);
   const oldPrice = Number.isFinite(mlOldPrice) && mlOldPrice > 0 ? mlOldPrice : product.oldPrice;
   const syncStatus = hasMercadoLivrePrice ? "synced" : mercadoLivreData.syncStatus || "partial";
-  const dataSource = syncStatus === "synced" ? "mercadolivre" : "mercadolivre-partial";
+  const dataSource = buildMercadoLivreDataSource(mercadoLivreData.type, syncStatus);
   const discount = oldPrice && price ? Math.max(0, Math.round(((oldPrice - price) / oldPrice) * 100)) : product.discount;
   const heroImage = mercadoLivreData.heroImage || images[0] || product.heroImage;
   const rating = mercadoLivreData.rating ?? product.rating;
@@ -297,7 +297,7 @@ function mergeProductData(product, mercadoLivreData) {
   console.log(
     `[ML SYNC] Aplicando merge em ${product.id}: type=${mercadoLivreData.type || "unknown"} price=${hasMercadoLivrePrice ? mlPrice : "fallback-manual"} dataSource=${dataSource} syncStatus=${syncStatus}`
   );
-  if (product.id === "tech-001" && dataSource === "mercadolivre") {
+  if (product.id === "tech-001" && dataSource.startsWith("mercadolivre")) {
     console.log("[ML SYNC] Produto tech-001 sincronizado");
   }
 
@@ -362,6 +362,13 @@ function mergeProductData(product, mercadoLivreData) {
   return mergedProduct;
 }
 
+function buildMercadoLivreDataSource(type, syncStatus) {
+  if (syncStatus !== "synced") return "mercadolivre-partial";
+  if (type === "item") return "mercadolivre-item";
+  if (type === "catalog_product") return "mercadolivre";
+  return "mercadolivre";
+}
+
 function naturalNumber(filename) {
   const match = filename.match(/\d+/);
   return match ? Number(match[0]) : Number.MAX_SAFE_INTEGER;
@@ -414,7 +421,7 @@ export function finalizeMercadoLivreProduct(product) {
   return {
     ...product,
     price: parsedMercadoLivrePrice,
-    dataSource: "mercadolivre",
+    dataSource: product.meliType === "item" ? "mercadolivre-item" : "mercadolivre",
     syncStatus: "synced"
   };
 }
