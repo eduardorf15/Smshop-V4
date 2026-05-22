@@ -323,10 +323,24 @@ async function findCatalogOffers(meliId, headers) {
     fetchMeliResource(`sites/MLB/search?catalog_product_id=${encodedId}`, headers)
   ]);
 
-  return results.flatMap((result) => {
+  const offers = results.flatMap((result) => {
     if (result.status !== "fulfilled" || !result.value.ok) return [];
     return extractOffers(result.value.data).map((offer) => normalizeOffer(offer, "catalog_offer")).filter(Boolean);
   });
+
+  const offersNeedingDetails = offers.filter((offer) => offer.item_id && numberOrNull(offer.price) === null);
+  if (!offersNeedingDetails.length) return offers;
+
+  console.log(`[ML PRICE] detalhando ${offersNeedingDetails.length} ofertas sem preço para ${meliId}`);
+  const detailedResults = await Promise.allSettled(
+    offersNeedingDetails.slice(0, 10).map((offer) => fetchMeliResource(`items/${encodeURIComponent(offer.item_id)}`, headers))
+  );
+  const detailedOffers = detailedResults
+    .filter((result) => result.status === "fulfilled" && result.value.ok)
+    .map((result) => normalizeOffer(result.value.data, "catalog_offer_item_detail"))
+    .filter(Boolean);
+
+  return [...offers, ...detailedOffers];
 }
 
 function extractOffers(data) {

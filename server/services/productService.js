@@ -264,6 +264,20 @@ function mergeProductData(product, mercadoLivreData) {
   const oldPrice = mercadoLivreData.oldPrice ?? product.oldPrice;
   const syncStatus = hasMercadoLivrePrice ? "synced" : mercadoLivreData.syncStatus || "partial";
   const dataSource = syncStatus === "synced" ? "mercadolivre" : "mercadolivre-partial";
+  const discount = oldPrice && price ? Math.max(0, Math.round(((oldPrice - price) / oldPrice) * 100)) : product.discount;
+  const heroImage = mercadoLivreData.heroImage || images[0] || product.heroImage;
+  const rating = mercadoLivreData.rating ?? product.rating;
+  const reviews = mercadoLivreData.reviews ?? mercadoLivreData.soldQuantity ?? product.reviews;
+
+  console.log(
+    `[ML PRICE BEFORE] ${JSON.stringify({
+      id: product.id,
+      localPrice: product.price,
+      mercadoLivrePrice: mercadoLivreData.price ?? null,
+      localOldPrice: product.oldPrice ?? null,
+      mercadoLivreOldPrice: mercadoLivreData.oldPrice ?? null
+    })}`
+  );
 
   console.log(
     `[ML SYNC] Aplicando merge em ${product.id}: type=${mercadoLivreData.type || "unknown"} price=${hasMercadoLivrePrice ? mercadoLivreData.price : "fallback-manual"} dataSource=${dataSource} syncStatus=${syncStatus}`
@@ -277,19 +291,37 @@ function mergeProductData(product, mercadoLivreData) {
     name: mercadoLivreData.title || product.name,
     price,
     oldPrice,
-    discount: oldPrice && price ? Math.max(0, Math.round(((oldPrice - price) / oldPrice) * 100)) : product.discount,
+    discount,
     images,
-    heroImage: mercadoLivreData.heroImage || images[0] || product.heroImage,
+    heroImage,
     available: mercadoLivreData.available ?? product.available,
+    rating,
+    reviews,
     meliType: mercadoLivreData.type || null,
     meliStatus: mercadoLivreData.status || null,
     stock: mercadoLivreData.stock ?? product.stock ?? null,
     soldQuantity: mercadoLivreData.soldQuantity ?? product.soldQuantity ?? null,
     mercadoLivrePermalink: mercadoLivreData.permalink || null,
+    seller: mercadoLivreData.seller || product.seller || null,
     syncedAt: mercadoLivreData.fetchedAt,
     dataSource,
     syncStatus
   };
+
+  console.log(
+    `[ML PRICE AFTER] ${JSON.stringify({
+      id: mergedProduct.id,
+      price: mergedProduct.price,
+      oldPrice: mergedProduct.oldPrice,
+      discount: mergedProduct.discount,
+      dataSource: mergedProduct.dataSource,
+      syncStatus: mergedProduct.syncStatus
+    })}`
+  );
+
+  if (hasMercadoLivrePrice) {
+    console.log(`[ML MERGE SUCCESS] ${product.id} price=${price} oldPrice=${oldPrice ?? "null"} source=${dataSource}`);
+  }
 
   if (product.id === "tech-001") {
     console.log(
