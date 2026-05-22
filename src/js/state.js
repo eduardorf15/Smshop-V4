@@ -30,8 +30,7 @@ export function applyTheme(theme) {
 }
 
 export function initTheme() {
-  const saved = localStorage.getItem(themeKey);
-  applyTheme(saved || "light");
+  applyTheme("dark");
 }
 
 export function toggleTheme() {

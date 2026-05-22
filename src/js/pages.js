@@ -5,6 +5,7 @@ import { setTitle, whatsappLink } from "./utils.js";
 export async function renderHome(app, products) {
   setTitle("Home", "Curadoria de tecnologia, acessórios e achados para o dia a dia.");
   const categories = buildHomeCategories();
+  const homeProducts = products.slice(0, 9);
   app.innerHTML = `
     <section class="hero reveal">
       <div class="hero-content">
@@ -20,6 +21,14 @@ export async function renderHome(app, products) {
           <span>✓ Curadoria premium</span>
           <span>✓ Suporte dedicado</span>
         </div>
+      </div>
+    </section>
+
+    <section class="rail-section home-products-section">
+      ${sectionHeader("Produtos", "Achados selecionados para começar.", "Veja opções úteis, bonitas e fáceis de escolher logo na primeira visita.", `<a class="text-link" href="/produtos">Ver tudo</a>`)}
+      <div class="home-product-grid">${homeProducts.map((product) => productCard(product, { compact: true })).join("")}</div>
+      <div class="home-products-action">
+        <a class="primary-button" href="/produtos">Ver todos os produtos</a>
       </div>
     </section>
 

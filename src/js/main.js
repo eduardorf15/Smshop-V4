@@ -56,6 +56,7 @@ async function route() {
 }
 
 function bindShellEvents() {
+  document.body.addEventListener("click", handleFavoriteClick, true);
   document.body.addEventListener("click", async (event) => {
     const link = event.target.closest("a[href^='/']");
     if (link && !event.metaKey && !event.ctrlKey && link.target !== "_blank") {
@@ -79,14 +80,6 @@ function bindShellEvents() {
 
     if (event.target.closest("[data-page-gallery-image]")) {
       event.target.closest("[data-page-gallery]")?.classList.toggle("is-zoomed");
-    }
-
-    const favoriteButton = event.target.closest("[data-favorite-toggle]");
-    if (favoriteButton) {
-      toggleFavorite(favoriteButton.dataset.favoriteToggle);
-      syncFavoriteButtons();
-      renderModal();
-      if (window.location.pathname === "/favoritos") await renderFavorites(app, products);
     }
 
     if (event.target.closest("[data-open-lead]")) openLeadPopup();
@@ -113,6 +106,17 @@ function bindShellEvents() {
   document.querySelector("[data-whatsapp]")?.addEventListener("click", () => window.open(whatsappLink(), "_blank", "noopener"));
   bindSearch();
   bindLeadPopup();
+}
+
+async function handleFavoriteClick(event) {
+  const favoriteButton = event.target.closest("[data-favorite-toggle]");
+  if (!favoriteButton) return;
+  event.preventDefault();
+  event.stopPropagation();
+  toggleFavorite(favoriteButton.dataset.favoriteToggle);
+  syncFavoriteButtons();
+  renderModal();
+  if (window.location.pathname === "/favoritos") await renderFavorites(app, products);
 }
 
 function bindPageEvents() {
