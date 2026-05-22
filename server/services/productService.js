@@ -323,6 +323,10 @@ function mergeProductData(product, mercadoLivreData) {
     syncStatus
   };
 
+  if (mercadoLivreData.syncWarning) {
+    mergedProduct.syncWarning = mercadoLivreData.syncWarning;
+  }
+
   if (rawMercadoLivrePrice !== null && rawMercadoLivrePrice !== undefined) {
     mergedProduct.mercadoLivreRawPrice = rawMercadoLivrePrice;
   }

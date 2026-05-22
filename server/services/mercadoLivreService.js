@@ -87,6 +87,9 @@ function extractMeliId(value) {
 
 export function extractMercadoLivreId(value) {
   const text = String(value || "");
+  const itemQueryMatch = text.match(/[?&](?:wid|item_id)=(ML[A-Z]{1,2}-?\d{6,})\b/i);
+  if (itemQueryMatch) return normalizeMeliId(itemQueryMatch[1]);
+
   const catalogMatch = text.match(/\/p\/(ML[A-Z]{1,2}-?\d{6,})\b/i);
   if (catalogMatch) return normalizeMeliId(catalogMatch[1]);
 
@@ -108,6 +111,11 @@ async function fetchMeliItem(meliId) {
   if (itemResult.ok) {
     console.log(`[ML SYNC] /items/${meliId} encontrado.`);
     return normalizeMeliItem(meliId, itemResult.data);
+  }
+
+  if (shouldUseManualFallbackForItemAccessDenied(itemResult, meliId)) {
+    console.log(`[ML SYNC] /items/${meliId} retornou 403 access_denied; usando fallback manual parcial sem tentar /products.`);
+    return buildItemAccessDeniedFallback(meliId, itemResult);
   }
 
   if (shouldTryCatalogProduct(itemResult, meliId)) {
@@ -133,6 +141,15 @@ export async function fetchMercadoLivreItemForTest(meliId) {
       ok: true,
       type: "item",
       data: mapItemResponse(itemResult.data)
+    };
+  }
+
+  if (shouldUseManualFallbackForItemAccessDenied(itemResult, meliId)) {
+    return {
+      ok: false,
+      type: "item",
+      message: "Preço indisponível pela API; usando fallback manual",
+      details: itemResult.details || `HTTP ${itemResult.status}`
     };
   }
 
@@ -415,6 +432,34 @@ function detectMercadoLivreIdKind(meliId) {
   const digits = String(meliId || "").replace(/\D/g, "");
   if (digits.length >= 10) return "item";
   return "catalog_product";
+}
+
+function shouldUseManualFallbackForItemAccessDenied(result, meliId) {
+  if (detectMercadoLivreIdKind(meliId) !== "item") return false;
+  if (result.status !== 403) return false;
+  return /access_denied|forbidden|denied|policy/i.test(result.details || "");
+}
+
+function buildItemAccessDeniedFallback(meliId, result) {
+  return {
+    meliId,
+    type: "item",
+    title: null,
+    price: null,
+    oldPrice: null,
+    heroImage: null,
+    images: [],
+    available: null,
+    status: null,
+    stock: null,
+    soldQuantity: null,
+    permalink: null,
+    seller: null,
+    fetchedAt: new Date().toISOString(),
+    syncStatus: "partial",
+    syncWarning: "Preço indisponível pela API; usando fallback manual",
+    warningDetails: result.details || `HTTP ${result.status}`
+  };
 }
 
 function normalizeOffer(offer, source) {
