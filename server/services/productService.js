@@ -318,12 +318,17 @@ function mergeProductData(product, mercadoLivreData) {
     soldQuantity: mercadoLivreData.soldQuantity ?? product.soldQuantity ?? null,
     mercadoLivrePermalink: mercadoLivreData.permalink || null,
     seller: mercadoLivreData.seller || product.seller || null,
-    mercadoLivreRawPrice: rawMercadoLivrePrice ?? null,
-    mercadoLivreParsedPrice: hasMercadoLivrePrice ? mlPrice : null,
     syncedAt: mercadoLivreData.fetchedAt,
     dataSource,
     syncStatus
   };
+
+  if (rawMercadoLivrePrice !== null && rawMercadoLivrePrice !== undefined) {
+    mergedProduct.mercadoLivreRawPrice = rawMercadoLivrePrice;
+  }
+  if (hasMercadoLivrePrice) {
+    mergedProduct.mercadoLivreParsedPrice = mlPrice;
+  }
 
   console.log(
     `[ML PRICE AFTER] ${JSON.stringify({

@@ -171,6 +171,7 @@ async function fetchMeliResource(pathname, headers) {
       clearTimeout(timeout);
       const data = await response.json().catch(() => ({}));
       console.log(`[ML RESPONSE] GET /${pathname} status=${response.status} attempt=${attempt + 1}`);
+      logRawMercadoLivreJson(pathname, data);
 
       if (!response.ok) {
         const result = {
@@ -200,7 +201,8 @@ async function fetchMeliResource(pathname, headers) {
 function normalizeMeliItem(meliId, item) {
   const stock = Number(item.available_quantity || 0);
   const status = item.status || null;
-  const price = extractPriceValue(item);
+  const priceInfo = findMercadoLivrePrice(item);
+  const price = extractMercadoLivrePrice(item);
   const oldPrice = extractOriginalPriceValue(item);
   console.log(
     `[ML RAW PRICE] ${JSON.stringify({
@@ -212,6 +214,7 @@ function normalizeMeliItem(meliId, item) {
       variations: summarizeVariationPrices(item.variations)
     })}`
   );
+  console.log(`[ML PRICE FIELD] ${JSON.stringify({ id: meliId, source: "item", field: priceInfo?.path || null })}`);
   console.log(`[ML PARSED PRICE] ${JSON.stringify({ id: meliId, source: "item", value: price, valid: price !== null })}`);
   return {
     meliId,
@@ -235,11 +238,12 @@ function normalizeMeliItem(meliId, item) {
 function normalizeMeliCatalogProduct(meliId, product, resolvedPrice = null) {
   const buyBoxWinner = product.buy_box_winner || {};
   const pictures = getPictures(product);
-  const price = firstNumber([
-    extractPriceValue(product),
-    extractPriceValue(buyBoxWinner),
-    extractPriceValue(resolvedPrice)
+  const priceInfo = findFirstPriceInfo([
+    findMercadoLivrePrice(product, "product"),
+    findMercadoLivrePrice(buyBoxWinner, "buy_box_winner"),
+    findMercadoLivrePrice(resolvedPrice, "resolvedPrice")
   ]);
+  const price = priceInfo?.value ?? null;
   const oldPrice = firstNumber([
     extractOriginalPriceValue(product),
     extractOriginalPriceValue(buyBoxWinner),
@@ -262,6 +266,7 @@ function normalizeMeliCatalogProduct(meliId, product, resolvedPrice = null) {
       variations: summarizeVariationPrices(product.variations)
     })}`
   );
+  console.log(`[ML PRICE FIELD] ${JSON.stringify({ id: meliId, source: "catalog_product", field: priceInfo?.path || null })}`);
   console.log(`[ML PARSED PRICE] ${JSON.stringify({ id: meliId, source: "catalog_product", value: price, valid: price !== null })}`);
 
   return {
@@ -289,7 +294,7 @@ function mapItemResponse(item) {
   return {
     id: item.id || null,
     title: item.title || null,
-    price: extractPriceValue(item),
+    price: extractMercadoLivrePrice(item),
     original_price: extractOriginalPriceValue(item),
     available_quantity: Number(item.available_quantity || 0),
     thumbnail: item.secure_thumbnail || item.thumbnail || null,
@@ -307,7 +312,7 @@ function mapCatalogProductResponse(product, offer = null) {
   return {
     id: product.id || null,
     title: product.name || product.title || null,
-    price: firstNumber([extractPriceValue(product), extractPriceValue(buyBoxWinner), extractPriceValue(offer)]),
+    price: firstNumber([extractMercadoLivrePrice(product), extractMercadoLivrePrice(buyBoxWinner), extractMercadoLivrePrice(offer)]),
     original_price: firstNumber([extractOriginalPriceValue(product), extractOriginalPriceValue(buyBoxWinner), extractOriginalPriceValue(offer)]),
     available_quantity: Number(product.available_quantity || buyBoxWinner.available_quantity || offer?.available_quantity || 0),
     thumbnail: product.thumbnail || buyBoxWinner.thumbnail || offer?.thumbnail || pictures[0] || null,
@@ -326,6 +331,7 @@ async function resolveMercadoLivrePrice(meliId, product, headers) {
     try {
       const itemResult = await fetchMeliResource(`items/${encodeURIComponent(itemId)}`, headers);
       if (itemResult.ok) {
+        logRawMercadoLivreJson(`${meliId}/buy_box_item/${itemId}`, itemResult.data);
         const itemOffer = normalizeOffer(itemResult.data, "buy_box_item");
         if (itemOffer) candidates.push(itemOffer);
       }
@@ -363,7 +369,7 @@ async function findCatalogOffers(meliId, headers) {
     return extractOffers(result.value.data).map((offer) => normalizeOffer(offer, "catalog_offer")).filter(Boolean);
   });
 
-  const offersNeedingDetails = offers.filter((offer) => offer.item_id && numberOrNull(offer.price) === null);
+  const offersNeedingDetails = offers.filter((offer) => offer.item_id && extractMercadoLivrePrice(offer) === null);
   if (!offersNeedingDetails.length) return offers;
 
   console.log(`[ML PRICE] detalhando ${offersNeedingDetails.length} ofertas sem preço para ${meliId}`);
@@ -372,7 +378,11 @@ async function findCatalogOffers(meliId, headers) {
   );
   const detailedOffers = detailedResults
     .filter((result) => result.status === "fulfilled" && result.value.ok)
-    .map((result) => normalizeOffer(result.value.data, "catalog_offer_item_detail"))
+    .map((result) => {
+      const data = result.value.data;
+      logRawMercadoLivreJson(`${meliId}/catalog_offer_item_detail/${data?.id || "unknown"}`, data);
+      return normalizeOffer(data, "catalog_offer_item_detail");
+    })
     .filter(Boolean);
 
   return [...offers, ...detailedOffers];
@@ -397,7 +407,8 @@ function normalizeOffer(offer, source) {
   if (!offer || typeof offer !== "object") return null;
   const item = offer.item || offer;
   const seller = normalizeSeller(item.seller || item.seller_info || item.seller_address || item.seller_id || item.official_store_id);
-  const price = extractPriceValue(item);
+  const priceInfo = findMercadoLivrePrice(item);
+  const price = extractMercadoLivrePrice(item);
   const originalPrice = extractOriginalPriceValue(item);
   const itemId = item.item_id || item.id || item.catalog_listing_id || null;
   console.log(
@@ -413,6 +424,7 @@ function normalizeOffer(offer, source) {
     })}`
   );
   console.log(`[ML PARSED PRICE] ${JSON.stringify({ id: itemId || "sem-id", source, value: price, valid: price !== null })}`);
+  console.log(`[ML PRICE FIELD] ${JSON.stringify({ id: itemId || "sem-id", source, field: priceInfo?.path || null })}`);
 
   return {
     ...item,
@@ -442,7 +454,7 @@ function normalizeSeller(value) {
 }
 
 function isValidOffer(offer) {
-  if (!offer || numberOrNull(offer.price) === null) return false;
+  if (!offer || extractMercadoLivrePrice(offer) === null) return false;
   if (offer.status && offer.status !== "active") return false;
   if (Number(offer.available_quantity || 0) <= 0 && offer.status !== "active") return false;
   return true;
@@ -527,21 +539,79 @@ function numberOrNull(value) {
 }
 
 function extractPriceValue(value) {
-  if (!value || typeof value !== "object") return numberOrNull(value);
+  return extractMercadoLivrePrice(value);
+}
 
-  return firstNumber([
-    value.price,
-    value.current_price,
-    value.amount,
-    value.sale_price?.amount,
-    value.sale_price?.regular_amount,
-    value.sale_price,
-    value.installments?.amount,
-    value.installments?.total_amount,
-    value.prices?.prices?.find((price) => price?.type === "standard")?.amount,
-    value.prices?.prices?.[0]?.amount,
-    minVariationPrice(value.variations)
-  ]);
+function extractMercadoLivrePrice(data) {
+  return findMercadoLivrePrice(data)?.value ?? null;
+}
+
+function findMercadoLivrePrice(data, prefix = "") {
+  if (data === null || data === undefined) return null;
+  if (typeof data !== "object") {
+    const value = numberOrNull(data);
+    return value !== null && value > 0 ? { value, path: prefix || "value" } : null;
+  }
+
+  const candidates = [
+    ["price", data.price],
+    ["current_price", data.current_price],
+    ["current_price.amount", data.current_price?.amount],
+    ["amount", data.amount],
+    ["sale_price.amount", data.sale_price?.amount],
+    ["sale_price.regular_amount", data.sale_price?.regular_amount],
+    ["sale_price", typeof data.sale_price === "object" ? null : data.sale_price],
+    ["installments.amount", data.installments?.amount],
+    ["installments.total_amount", data.installments?.total_amount],
+    ["shipping.price", data.shipping?.price],
+    ["buy_box_winner.price", data.buy_box_winner?.price],
+    ["buy_box_winner.current_price", data.buy_box_winner?.current_price],
+    ["buy_box_winner.current_price.amount", data.buy_box_winner?.current_price?.amount],
+    ["buy_box_winner.sale_price.amount", data.buy_box_winner?.sale_price?.amount],
+    ["buy_box_winner.sale_price.regular_amount", data.buy_box_winner?.sale_price?.regular_amount],
+    ["buy_box_winner.installments.amount", data.buy_box_winner?.installments?.amount],
+    ["deals.price", data.deals?.price],
+    ["deals.current_price", data.deals?.current_price],
+    ["deals.current_price.amount", data.deals?.current_price?.amount],
+    ["deals.sale_price.amount", data.deals?.sale_price?.amount],
+    ["deals.installments.amount", data.deals?.installments?.amount],
+    ["deals.0.price", data.deals?.[0]?.price],
+    ["deals.0.current_price", data.deals?.[0]?.current_price],
+    ["deals.0.current_price.amount", data.deals?.[0]?.current_price?.amount],
+    ["deals.0.sale_price.amount", data.deals?.[0]?.sale_price?.amount],
+    ["deals.0.installments.amount", data.deals?.[0]?.installments?.amount],
+    ["prices.prices.standard.amount", data.prices?.prices?.find((price) => price?.type === "standard")?.amount],
+    ["prices.prices.0.amount", data.prices?.prices?.[0]?.amount]
+  ];
+
+  for (const [path, rawValue] of candidates) {
+    const value = numberOrNull(rawValue);
+    if (value !== null && value > 0) return { value, path: withPrefix(prefix, path) };
+  }
+
+  if (Array.isArray(data.variations)) {
+    for (let index = 0; index < data.variations.length; index += 1) {
+      const result = findMercadoLivrePrice(data.variations[index], withPrefix(prefix, `variations.${index}`));
+      if (result) return result;
+    }
+  }
+
+  return null;
+}
+
+function findFirstPriceInfo(results) {
+  return results.find((result) => result?.value !== null && result?.value !== undefined) || null;
+}
+
+function withPrefix(prefix, path) {
+  return prefix ? `${prefix}.${path}` : path;
+}
+
+function logRawMercadoLivreJson(pathname, data) {
+  const id = data?.id || data?.product_id || data?.catalog_product_id || "";
+  if (pathname.includes("MLB66266661") || id === "MLB66266661") {
+    console.log(`[ML RAW API JSON] GET /${pathname} ${JSON.stringify(data)}`);
+  }
 }
 
 function extractOriginalPriceValue(value) {
@@ -563,12 +633,6 @@ function firstNumber(values) {
     if (number !== null && number > 0) return number;
   }
   return null;
-}
-
-function minVariationPrice(variations) {
-  if (!Array.isArray(variations)) return null;
-  const prices = variations.map((variation) => extractPriceValue(variation)).filter((price) => price !== null && price > 0);
-  return prices.length ? Math.min(...prices) : null;
 }
 
 function summarizeVariationPrices(variations) {
