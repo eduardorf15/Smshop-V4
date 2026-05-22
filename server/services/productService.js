@@ -136,6 +136,43 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
   };
 }
 
+export async function updateProductManualData(id, updates = {}) {
+  const productId = String(id || "").trim();
+  if (!productId) {
+    throw createPublicError("ID do produto é obrigatório.", 400);
+  }
+
+  const allowedUpdates = validateManualProductUpdates(updates);
+  if (!Object.keys(allowedUpdates).length) {
+    throw createPublicError("Nenhum campo manual válido enviado para atualização.", 400);
+  }
+
+  const catalogProducts = await getCatalogProducts();
+  const existingProduct = catalogProducts.find((product) => product.id === productId || product.sku === productId);
+  if (!existingProduct) {
+    throw createPublicError("Produto não encontrado.", 404);
+  }
+
+  const importedProducts = await readImportedProducts();
+  const importedProduct = buildManualDataOverride(existingProduct, allowedUpdates);
+  const nextImportedProducts = upsertImportedProduct(importedProducts, importedProduct);
+
+  await writeImportedProducts(nextImportedProducts);
+  cache = null;
+  cacheFetchedAt = 0;
+
+  const products = await listProducts();
+  const updatedProduct = products.find((product) => product.id === existingProduct.id || product.sku === existingProduct.sku);
+
+  return {
+    storageFile: importedProductsFile,
+    product: updatedProduct || {
+      ...existingProduct,
+      ...allowedUpdates
+    }
+  };
+}
+
 export async function forceRefreshMercadoLivreProducts() {
   const products = await buildManualProducts();
   const productsWithMeliId = products.filter((product) => product.meliId);
@@ -510,6 +547,71 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, meliId, categ
     importedFromMercadoLivre: true,
     importedAt: new Date().toISOString()
   };
+}
+
+function buildManualDataOverride(existingProduct, updates) {
+  const override = {
+    id: existingProduct.id,
+    sku: existingProduct.sku,
+    manualDataUpdatedAt: new Date().toISOString(),
+    ...updates
+  };
+
+  if (existingProduct.meliId) override.meliId = existingProduct.meliId;
+  return override;
+}
+
+function validateManualProductUpdates(updates) {
+  if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
+    throw createPublicError("Body inválido para atualização manual.", 400);
+  }
+
+  const allowed = {};
+  if (Object.prototype.hasOwnProperty.call(updates, "affiliateUrl")) {
+    allowed.affiliateUrl = validateAffiliateUrl(updates.affiliateUrl);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "price")) {
+    allowed.price = validateOptionalNumber(updates.price, "price", { allowNull: false });
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "oldPrice")) {
+    allowed.oldPrice = validateOptionalNumber(updates.oldPrice, "oldPrice", { allowNull: true });
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "available")) {
+    if (typeof updates.available !== "boolean") {
+      throw createPublicError("available deve ser booleano.", 400);
+    }
+    allowed.available = updates.available;
+  }
+
+  return allowed;
+}
+
+function validateAffiliateUrl(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw createPublicError("affiliateUrl deve ser uma URL válida.", 400);
+  }
+
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw createPublicError("affiliateUrl deve ser uma URL válida.", 400);
+  }
+
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw createPublicError("affiliateUrl deve usar http ou https.", 400);
+  }
+
+  return url.toString();
+}
+
+function validateOptionalNumber(value, field, { allowNull }) {
+  if (value === null && allowNull) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    throw createPublicError(`${field} deve ser um número válido.`, 400);
+  }
+  return number;
 }
 
 function normalizeTags(tags) {

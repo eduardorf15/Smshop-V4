@@ -1,3 +1,14 @@
 {
-  "products": []
+  "products": [
+    {
+      "id": "tech-001",
+      "sku": "001",
+      "manualDataUpdatedAt": "2026-05-22T22:20:34.918Z",
+      "affiliateUrl": "https://meli.la/33M7VRW",
+      "price": 166.66,
+      "oldPrice": null,
+      "available": true,
+      "meliId": "MLB66266661"
+    }
+  ]
 }

@@ -4,7 +4,8 @@ import { receiveLead, receiveContact } from "../controllers/leadController.js";
 import {
   forceRefreshMercadoLivreProducts,
   getSyncReport,
-  importMercadoLivreProduct
+  importMercadoLivreProduct,
+  updateProductManualData
 } from "../services/productService.js";
 import {
   exchangeCodeForToken,
@@ -81,6 +82,15 @@ router.post("/api/admin/import-mercadolivre", async (req, res, next) => {
 router.post("/api/admin/products/refresh", async (_req, res, next) => {
   try {
     const result = await forceRefreshMercadoLivreProducts();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/api/admin/products/:id/manual-data", async (req, res, next) => {
+  try {
+    const result = await updateProductManualData(req.params.id, req.body || {});
     res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
