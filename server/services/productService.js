@@ -259,7 +259,16 @@ function mergeProductData(product, mercadoLivreData) {
   }
 
   const images = mercadoLivreData.images?.length ? mercadoLivreData.images : product.images;
-  const rawMercadoLivrePrice = mercadoLivreData.price;
+  const rawMercadoLivrePrice = firstDefined([
+    mercadoLivreData.price,
+    mercadoLivreData.rawPrice,
+    mercadoLivreData.sale_price,
+    mercadoLivreData.salePrice,
+    mercadoLivreData.current_price,
+    mercadoLivreData.currentPrice,
+    mercadoLivreData.installments?.amount,
+    mercadoLivreData.installments?.total_amount
+  ]);
   const mlPrice = Number(rawMercadoLivrePrice);
   const hasMercadoLivrePrice = Number.isFinite(mlPrice) && mlPrice > 0;
   const price = hasMercadoLivrePrice ? mlPrice : product.price;
@@ -309,6 +318,8 @@ function mergeProductData(product, mercadoLivreData) {
     soldQuantity: mercadoLivreData.soldQuantity ?? product.soldQuantity ?? null,
     mercadoLivrePermalink: mercadoLivreData.permalink || null,
     seller: mercadoLivreData.seller || product.seller || null,
+    mercadoLivreRawPrice: rawMercadoLivrePrice ?? null,
+    mercadoLivreParsedPrice: hasMercadoLivrePrice ? mlPrice : null,
     syncedAt: mercadoLivreData.fetchedAt,
     dataSource,
     syncStatus
@@ -366,6 +377,45 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+}
+
+export function finalizeMercadoLivreProduct(product) {
+  const rawMercadoLivrePrice = firstDefined([
+    product.mercadoLivreParsedPrice,
+    product.mercadoLivreRawPrice,
+    product.mlPrice,
+    product.meliPrice,
+    product.mercadoLivrePrice
+  ]);
+  const parsedMercadoLivrePrice = Number(rawMercadoLivrePrice);
+  const hasMercadoLivrePrice = Number.isFinite(parsedMercadoLivrePrice) && parsedMercadoLivrePrice > 0;
+
+  if (product.id === "tech-001") {
+    console.log(
+      `[FINAL PRODUCT PRICE] ${JSON.stringify({
+        id: product.id,
+        currentPrice: product.price,
+        rawMercadoLivrePrice: rawMercadoLivrePrice ?? null,
+        parsedMercadoLivrePrice,
+        hasMercadoLivrePrice
+      })}`
+    );
+    console.log(`[FINAL PRODUCT SOURCE] ${JSON.stringify({ id: product.id, dataSource: product.dataSource })}`);
+    console.log(`[FINAL PRODUCT STATUS] ${JSON.stringify({ id: product.id, syncStatus: product.syncStatus })}`);
+  }
+
+  if (!hasMercadoLivrePrice) return product;
+
+  return {
+    ...product,
+    price: parsedMercadoLivrePrice,
+    dataSource: "mercadolivre",
+    syncStatus: "synced"
+  };
+}
+
+function firstDefined(values) {
+  return values.find((value) => value !== null && value !== undefined);
 }
 
 async function getCatalogProducts() {

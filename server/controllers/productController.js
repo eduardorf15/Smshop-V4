@@ -1,4 +1,10 @@
-import { getProductById, listProducts, refreshProductsCache, syncProductsWithMercadoLivre } from "../services/productService.js";
+import {
+  finalizeMercadoLivreProduct,
+  getProductById,
+  listProducts,
+  refreshProductsCache,
+  syncProductsWithMercadoLivre
+} from "../services/productService.js";
 
 export async function getProducts(req, res, next) {
   try {
@@ -28,6 +34,8 @@ export async function getProducts(req, res, next) {
 
     filtered = await syncProductsWithMercadoLivre(filtered);
 
+    filtered = filtered.map(finalizeMercadoLivreProduct);
+
     if (sort === "price-asc") filtered.sort((a, b) => a.price - b.price);
     if (sort === "price-desc") filtered.sort((a, b) => b.price - a.price);
     if (sort === "discount") filtered.sort((a, b) => Number(b.onOffer) - Number(a.onOffer));
@@ -35,6 +43,9 @@ export async function getProducts(req, res, next) {
 
     const tech001 = filtered.find((product) => product.id === "tech-001");
     if (tech001) {
+      console.log(`[FINAL PRODUCT PRICE] ${JSON.stringify({ id: tech001.id, price: tech001.price })}`);
+      console.log(`[FINAL PRODUCT SOURCE] ${JSON.stringify({ id: tech001.id, dataSource: tech001.dataSource })}`);
+      console.log(`[FINAL PRODUCT STATUS] ${JSON.stringify({ id: tech001.id, syncStatus: tech001.syncStatus })}`);
       console.log(
         `[ML SYNC RESPONSE] ${JSON.stringify({
           id: tech001.id,
