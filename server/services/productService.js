@@ -3,17 +3,44 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { affiliateLinks } from "../../src/data/affiliate-links.js";
 import { productCatalog } from "../../src/data/product-catalog.js";
+import { getMercadoLivreData, getMeliId, refreshMercadoLivreCache } from "./mercadoLivreService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "../..");
 const productRoot = path.join(rootDir, "imagens", "tecnologia");
 const imageExt = new Set([".webp", ".png", ".jpg", ".jpeg", ".avif"]);
+const productCacheTtlMs = Number(process.env.PRODUCT_CACHE_TTL_MS || process.env.MELI_CACHE_TTL_MS || 6 * 60 * 60 * 1000);
 let cache;
+let cacheFetchedAt = 0;
 
 export async function listProducts() {
-  if (cache && process.env.NODE_ENV === "production") return cache;
+  if (cache && Date.now() - cacheFetchedAt < productCacheTtlMs) return cache;
 
+  const products = await buildManualProducts();
+  const mercadoLivreData = await getMercadoLivreData(products);
+  const mergedProducts = products.map((product) => mergeProductData(product, mercadoLivreData[product.id]));
+
+  cache = mergedProducts;
+  cacheFetchedAt = Date.now();
+  return mergedProducts;
+}
+
+export async function getProductById(id) {
+  const products = await listProducts();
+  return products.find((product) => product.id === id || product.sku === id);
+}
+
+export async function refreshProductsCache() {
+  const products = await buildManualProducts();
+  const result = await refreshMercadoLivreCache(products);
+  cache = null;
+  cacheFetchedAt = 0;
+  await listProducts();
+  return result;
+}
+
+async function buildManualProducts() {
   const folderNames = (await fs.readdir(productRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
@@ -31,11 +58,13 @@ export async function listProducts() {
 
       const images = files.map((file) => `/imagens/tecnologia/${folder}/${file}`);
       const catalog = productCatalog.find((product) => product.sku === folder);
+      const affiliateUrl = catalog.affiliateUrl || affiliateLinks[index] || null;
       const price = catalog.price;
       const category = catalog.category;
       const categorySlug = catalog.categorySlug || slugify(category);
       const productType = catalog.productType || category;
       const productTypeSlug = slugify(productType);
+      if (!affiliateUrl) console.warn(`[SMShop] Produto ${folder} sem link afiliado cadastrado.`);
 
       return {
         id: `tech-${folder}`,
@@ -46,10 +75,12 @@ export async function listProducts() {
         categorySlug,
         productType,
         productTypeSlug,
+        meliId: getMeliId(catalog),
+        meliUrl: catalog.meliUrl || null,
         description: catalog.description,
         images,
         heroImage: images[0] || "/imagens/logo/logo.png",
-        affiliateUrl: affiliateLinks[index] || null,
+        affiliateUrl,
         price,
         oldPrice: null,
         discount: null,
@@ -59,13 +90,36 @@ export async function listProducts() {
         onOffer: index < 8 || index % 4 === 0,
         featured: index < 10 || index % 6 === 0,
         badge: badgeFor(index),
-        tags: [...new Set([...(catalog.categoryTags || []), productTypeSlug, ...catalog.tags])]
+        tags: [...new Set([...(catalog.categoryTags || []), productTypeSlug, ...catalog.tags])],
+        dataSource: "manual"
       };
     })
   );
 
-  cache = products;
   return products;
+}
+
+function mergeProductData(product, mercadoLivreData) {
+  if (!mercadoLivreData) return product;
+  const images = mercadoLivreData.images?.length ? mercadoLivreData.images : product.images;
+  const price = mercadoLivreData.price ?? product.price;
+  const oldPrice = mercadoLivreData.oldPrice ?? product.oldPrice;
+
+  return {
+    ...product,
+    name: mercadoLivreData.title || product.name,
+    price,
+    oldPrice,
+    discount: oldPrice && price ? Math.max(0, Math.round(((oldPrice - price) / oldPrice) * 100)) : product.discount,
+    images,
+    heroImage: mercadoLivreData.heroImage || images[0] || product.heroImage,
+    available: mercadoLivreData.available ?? product.available,
+    stock: mercadoLivreData.stock ?? product.stock ?? null,
+    soldQuantity: mercadoLivreData.soldQuantity ?? product.soldQuantity ?? null,
+    mercadoLivrePermalink: mercadoLivreData.permalink || null,
+    syncedAt: mercadoLivreData.fetchedAt,
+    dataSource: "mercado-livre-cache"
+  };
 }
 
 function naturalNumber(filename) {

@@ -301,6 +301,8 @@ const rawProductCatalog = [
 
 export const productCatalog = rawProductCatalog.map((product) => ({
   ...product,
+  meliId: product.meliId || null,
+  meliUrl: product.meliUrl || null,
   category: product.category || defaultCategoryName,
   categorySlug: product.categorySlug || slugify(product.category || defaultCategoryName),
   categoryTags: [...new Set([...(product.categoryTags || []), product.categorySlug || slugify(product.category || defaultCategoryName)])]

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getProducts, getProductSummary } from "../controllers/productController.js";
+import { getProduct, getProducts, getProductSummary, refreshProductCache } from "../controllers/productController.js";
 import { receiveLead, receiveContact } from "../controllers/leadController.js";
 
 const router = Router();
@@ -10,6 +10,8 @@ router.get("/api/health", (_req, res) => {
 
 router.get("/api/products", getProducts);
 router.get("/api/products/summary", getProductSummary);
+router.get("/api/products/:id", getProduct);
+router.post("/api/products/cache/refresh", refreshProductCache);
 router.post("/api/leads", receiveLead);
 router.post("/api/contact", receiveContact);
 

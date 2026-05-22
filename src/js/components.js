@@ -31,7 +31,8 @@ export function productCard(product, options = {}) {
 
 export function affiliateButton(product, label = "Comprar oferta") {
   if (!product.affiliateUrl) {
-    return `<a class="primary-button" href="${supportMessage(product)}" target="_blank" rel="noopener">Consultar</a>`;
+    console.warn(`[SMShop] Produto sem link afiliado: ${product.id || product.name}`);
+    return `<button class="primary-button" type="button" disabled aria-disabled="true" title="Link afiliado indisponível">Indisponível</button>`;
   }
   return `<a class="primary-button" href="${product.affiliateUrl}" target="_blank" rel="nofollow sponsored noopener">${label}</a>`;
 }
@@ -49,10 +50,6 @@ export function sectionHeader(label, title, text, action = "") {
 
 export function skeletonGrid(count = 6) {
   return `<div class="product-grid">${Array.from({ length: count }).map(() => `<div class="skeleton-card"></div>`).join("")}</div>`;
-}
-
-function supportMessage(product) {
-  return `https://wa.me/5511969940100?text=${encodeURIComponent(`Quero consultar disponibilidade do produto ${product.name}`)}`;
 }
 
 function escapeHtml(value) {

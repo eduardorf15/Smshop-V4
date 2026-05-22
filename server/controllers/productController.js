@@ -1,4 +1,4 @@
-import { listProducts } from "../services/productService.js";
+import { getProductById, listProducts, refreshProductsCache } from "../services/productService.js";
 
 export async function getProducts(req, res, next) {
   try {
@@ -32,6 +32,32 @@ export async function getProducts(req, res, next) {
     if (sort === "rating") filtered.sort((a, b) => b.rating - a.rating);
 
     res.json({ ok: true, count: filtered.length, products: filtered });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getProduct(req, res, next) {
+  try {
+    const product = await getProductById(req.params.id);
+    if (!product) {
+      res.status(404).json({ ok: false, message: "Produto não encontrado." });
+      return;
+    }
+    res.json({ ok: true, product });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function refreshProductCache(req, res, next) {
+  try {
+    if (process.env.PRODUCT_CACHE_REFRESH_TOKEN && req.get("x-cache-token") !== process.env.PRODUCT_CACHE_REFRESH_TOKEN) {
+      res.status(401).json({ ok: false, message: "Token inválido para atualizar cache." });
+      return;
+    }
+    const result = await refreshProductsCache();
+    res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }
