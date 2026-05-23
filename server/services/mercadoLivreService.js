@@ -99,6 +99,39 @@ export function extractMercadoLivreId(value) {
   return null;
 }
 
+export async function resolveMercadoLivreIdFromInput(value) {
+  const directId = extractMercadoLivreId(value);
+  if (directId) return directId;
+
+  const text = String(value || "").trim();
+  if (!/^https?:\/\/(?:www\.)?meli\.la\//i.test(text)) return null;
+
+  let currentUrl = text;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    try {
+      const response = await fetch(currentUrl, {
+        method: "GET",
+        redirect: "manual",
+        signal: controller.signal
+      });
+      const location = response.headers.get("location");
+      if (!location) break;
+      currentUrl = new URL(location, currentUrl).toString();
+      const redirectedId = extractMercadoLivreId(currentUrl);
+      if (redirectedId) return redirectedId;
+    } catch (error) {
+      console.log(`[ML SYNC] Não foi possível resolver URL curta Mercado Livre: ${error.message}`);
+      break;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  return null;
+}
+
 function normalizeMeliId(value) {
   return String(value).replace("-", "").toUpperCase();
 }

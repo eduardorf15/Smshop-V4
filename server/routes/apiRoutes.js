@@ -2,10 +2,17 @@ import { Router } from "express";
 import { getProduct, getProducts, getProductSummary, refreshProductCache } from "../controllers/productController.js";
 import { receiveLead, receiveContact } from "../controllers/leadController.js";
 import { loginAdmin, requireAdminAuth } from "../services/adminAuthService.js";
+import { getAnalyticsSummary, recordProductClick } from "../services/adminAnalyticsService.js";
+import { getAdminAlerts } from "../services/adminAlertsService.js";
+import { getAdminDashboard } from "../services/adminDashboardService.js";
 import {
+  createManualProduct,
+  deleteAdminProduct,
   forceRefreshMercadoLivreProducts,
+  getAdminProducts,
   getSyncReport,
   importMercadoLivreProduct,
+  syncAdminProduct,
   updateProductManualData
 } from "../services/productService.js";
 import {
@@ -71,6 +78,15 @@ router.get("/api/mercadolivre/item/:meliId", async (req, res, next) => {
   }
 });
 
+router.post("/api/analytics/click", async (req, res, next) => {
+  try {
+    const result = await recordProductClick(req.body || {});
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/api/admin/login", (req, res, next) => {
   try {
     res.json({ ok: true, ...loginAdmin(req.body?.password) });
@@ -81,9 +97,36 @@ router.post("/api/admin/login", (req, res, next) => {
 
 router.use("/api/admin", requireAdminAuth);
 
+router.get("/api/admin/dashboard", async (_req, res, next) => {
+  try {
+    const dashboard = await getAdminDashboard();
+    res.json({ ok: true, dashboard });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/api/admin/products", async (_req, res, next) => {
+  try {
+    const products = await getAdminProducts();
+    res.json({ ok: true, count: products.length, products });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/api/admin/import-mercadolivre", async (req, res, next) => {
   try {
     const result = await importMercadoLivreProduct(req.body || {});
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/admin/products/manual", async (req, res, next) => {
+  try {
+    const result = await createManualProduct(req.body || {});
     res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
@@ -108,10 +151,46 @@ router.patch("/api/admin/products/:id/manual-data", async (req, res, next) => {
   }
 });
 
+router.post("/api/admin/products/:id/sync", async (req, res, next) => {
+  try {
+    const result = await syncAdminProduct(req.params.id);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/api/admin/products/:id", async (req, res, next) => {
+  try {
+    const result = await deleteAdminProduct(req.params.id);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/api/admin/sync-report", async (_req, res, next) => {
   try {
     const report = await getSyncReport();
     res.json({ ok: true, ...report });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/api/admin/alerts", async (_req, res, next) => {
+  try {
+    const alerts = await getAdminAlerts();
+    res.json({ ok: true, alerts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/api/admin/analytics", async (_req, res, next) => {
+  try {
+    const analytics = await getAnalyticsSummary();
+    res.json({ ok: true, analytics });
   } catch (error) {
     next(error);
   }

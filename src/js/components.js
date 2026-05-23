@@ -34,7 +34,7 @@ export function affiliateButton(product, label = "Comprar oferta") {
     console.warn(`[SMShop] Produto sem link afiliado: ${product.id || product.name}`);
     return `<button class="primary-button" type="button" disabled aria-disabled="true" title="Link afiliado indisponível">Indisponível</button>`;
   }
-  return `<a class="primary-button" href="${product.affiliateUrl}" target="_blank" rel="nofollow sponsored noopener">${label}</a>`;
+  return `<a class="primary-button" href="${product.affiliateUrl}" target="_blank" rel="nofollow sponsored noopener" data-affiliate-click="${product.id}" data-product-name="${escapeHtml(product.name)}">${label}</a>`;
 }
 
 export function sectionHeader(label, title, text, action = "") {

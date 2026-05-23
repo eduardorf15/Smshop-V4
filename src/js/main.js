@@ -83,6 +83,9 @@ function bindShellEvents() {
     }
 
     if (event.target.closest("[data-open-lead]")) openLeadPopup();
+
+    const affiliateClick = event.target.closest("[data-affiliate-click]");
+    if (affiliateClick) recordAffiliateClick(affiliateClick);
   });
 
   window.addEventListener("popstate", route);
@@ -106,6 +109,25 @@ function bindShellEvents() {
   document.querySelector("[data-whatsapp]")?.addEventListener("click", () => window.open(whatsappLink(), "_blank", "noopener"));
   bindSearch();
   bindLeadPopup();
+}
+
+function recordAffiliateClick(link) {
+  const payload = JSON.stringify({
+    productId: link.dataset.affiliateClick,
+    productName: link.dataset.productName || ""
+  });
+
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon("/api/analytics/click", new Blob([payload], { type: "application/json" }));
+    return;
+  }
+
+  fetch("/api/analytics/click", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: payload,
+    keepalive: true
+  }).catch(() => {});
 }
 
 async function handleFavoriteClick(event) {

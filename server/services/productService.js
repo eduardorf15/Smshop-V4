@@ -8,7 +8,8 @@ import {
   fetchMercadoLivreDataById,
   getMercadoLivreData,
   getMeliId,
-  refreshMercadoLivreCache
+  refreshMercadoLivreCache,
+  resolveMercadoLivreIdFromInput
 } from "./mercadoLivreService.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -93,8 +94,8 @@ export async function refreshProductsCache() {
   return result;
 }
 
-export async function importMercadoLivreProduct({ input, category = "Tecnologia", affiliateUrl, tags = [], featured = false, price = null }) {
-  const meliId = extractMercadoLivreId(input);
+export async function importMercadoLivreProduct({ input, category = "Tecnologia", affiliateUrl, tags = [], featured = false, available = true, price = null }) {
+  const meliId = await resolveMercadoLivreIdFromInput(input);
   if (!meliId) {
     throw createPublicError("Informe uma URL ou ID válido do Mercado Livre.", 400);
   }
@@ -109,19 +110,19 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
   const existingProducts = await buildManualProducts();
   const existingProduct = existingProducts.find((product) => product.meliId === meliId);
   const mercadoLivreData = await fetchMercadoLivreDataById(meliId, { force: true });
-  if (mercadoLivreData?.syncStatus === "error") {
-    throw createPublicError(`Falha ao buscar produto no Mercado Livre: ${mercadoLivreData.errorMessage || "erro desconhecido"}`, 502);
-  }
+  const usableMercadoLivreData = mercadoLivreData?.syncStatus === "error" ? null : mercadoLivreData;
 
   const importedProducts = await readImportedProducts();
   const importedProduct = buildImportedProduct({
     existingProduct,
-    mercadoLivreData,
+    mercadoLivreData: usableMercadoLivreData,
+    mercadoLivreError: mercadoLivreData?.syncStatus === "error" ? mercadoLivreData.errorMessage : "",
     meliId,
     category: safeCategory,
     affiliateUrl,
     tags: safeTags,
     featured,
+    available,
     manualPrice
   });
   const nextImportedProducts = upsertImportedProduct(importedProducts, importedProduct);
@@ -136,6 +137,56 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
     updated: Boolean(existingProduct),
     product: syncedProduct
   };
+}
+
+export async function getAdminProducts() {
+  const [products, importedProducts] = await Promise.all([listProducts(), readImportedProducts()]);
+  const importedIds = new Set(importedProducts.map((product) => product.id).filter(Boolean));
+  const importedMeliIds = new Set(importedProducts.map((product) => product.meliId).filter(Boolean));
+  return products.map((product) => ({
+    ...product,
+    importedRecord: importedIds.has(product.id) || (product.meliId && importedMeliIds.has(product.meliId)),
+    editable: true
+  }));
+}
+
+export async function createManualProduct(payload = {}) {
+  const updates = validateManualProductUpdates({
+    ...payload,
+    affiliateUrl: payload.affiliateUrl,
+    price: payload.price,
+    oldPrice: payload.oldPrice ?? null,
+    available: payload.available ?? true,
+    featured: payload.featured ?? false,
+    category: payload.category || "Tecnologia",
+    tags: payload.tags || []
+  });
+  const name = String(payload.name || "").trim();
+  if (!name) throw createPublicError("Nome do produto é obrigatório.", 400);
+  if (!updates.affiliateUrl) throw createPublicError("affiliateUrl é obrigatório.", 400);
+
+  const importedProducts = await readImportedProducts();
+  const id = uniqueImportedId(importedProducts, payload.id || slugify(name));
+  const category = updates.category || "Tecnologia";
+  const product = {
+    id,
+    sku: id,
+    name,
+    description: String(payload.description || name).trim(),
+    productType: String(payload.productType || category).trim(),
+    productTypeSlug: slugify(payload.productType || category),
+    images: normalizeImageList(payload.images),
+    heroImage: normalizeImageList(payload.images)[0] || "/imagens/logo/logo.png",
+    badge: String(payload.badge || "Curadoria").trim(),
+    onOffer: Boolean(payload.onOffer),
+    importedManual: true,
+    importedAt: new Date().toISOString(),
+    ...updates
+  };
+
+  await writeImportedProducts(upsertImportedProduct(importedProducts, product));
+  clearProductMemoryCache();
+  return { product: (await getAdminProducts()).find((item) => item.id === id) || product };
 }
 
 export async function updateProductManualData(id, updates = {}) {
@@ -175,6 +226,44 @@ export async function updateProductManualData(id, updates = {}) {
   };
 }
 
+export async function deleteAdminProduct(id) {
+  const productId = String(id || "").trim();
+  if (!productId) throw createPublicError("ID do produto é obrigatório.", 400);
+
+  const importedProducts = await readImportedProducts();
+  const products = await getCatalogProducts();
+  const existingProduct = products.find((product) => product.id === productId || product.sku === productId);
+  if (!existingProduct) throw createPublicError("Produto não encontrado.", 404);
+
+  const nextImportedProducts = importedProducts.filter((product) => product.id !== existingProduct.id && product.sku !== existingProduct.sku);
+  const wasImported = nextImportedProducts.length !== importedProducts.length;
+
+  if (!wasImported) {
+    nextImportedProducts.push({
+      id: existingProduct.id,
+      sku: existingProduct.sku,
+      meliId: existingProduct.meliId || null,
+      adminDeleted: true,
+      deletedAt: new Date().toISOString()
+    });
+  }
+
+  await writeImportedProducts(nextImportedProducts);
+  clearProductMemoryCache();
+  return { deleted: true, id: existingProduct.id, hiddenBaseProduct: !wasImported };
+}
+
+export async function syncAdminProduct(id) {
+  const products = await buildManualProducts();
+  const product = products.find((item) => item.id === id || item.sku === id);
+  if (!product) throw createPublicError("Produto não encontrado.", 404);
+  if (!product.meliId) throw createPublicError("Produto sem meliId para sincronizar.", 400);
+
+  const [syncedProduct] = await syncProductsWithMercadoLivre([product], { force: true });
+  clearProductMemoryCache();
+  return { product: syncedProduct };
+}
+
 export async function forceRefreshMercadoLivreProducts() {
   const products = await buildManualProducts();
   const productsWithMeliId = products.filter((product) => product.meliId);
@@ -189,6 +278,11 @@ export async function forceRefreshMercadoLivreProducts() {
     withMeliId: productsWithMeliId.length,
     refreshed: syncedProducts.filter((product) => product.meliId && product.syncStatus === "synced").length
   };
+}
+
+export function clearProductMemoryCache() {
+  cache = null;
+  cacheFetchedAt = 0;
 }
 
 export async function getSyncReport() {
@@ -232,7 +326,8 @@ async function buildManualProducts() {
             .sort((a, b) => naturalNumber(a) - naturalNumber(b))
         : [];
 
-      const images = files.map((file) => `/imagens/tecnologia/${folder}/${file}`);
+      const fileImages = files.map((file) => `/imagens/tecnologia/${folder}/${file}`);
+      const images = fileImages.length ? fileImages : normalizeImageList(catalog.images);
       const affiliateUrl = catalog.affiliateUrl || affiliateLinks[index] || null;
       const price = catalog.price;
       const category = catalog.category;
@@ -256,20 +351,26 @@ async function buildManualProducts() {
         meliUrl: catalog.meliUrl || null,
         description: catalog.description,
         images,
-        heroImage: images[0] || "/imagens/logo/logo.png",
+        heroImage: catalog.heroImage || images[0] || "/imagens/logo/logo.png",
         affiliateUrl,
         price,
         oldPrice: null,
         discount: null,
         rating: Number((4.6 + ((index % 4) * 0.1)).toFixed(1)),
         reviews: 120 + index * 17,
-        available: Boolean(images.length),
+        available: catalog.available ?? Boolean(images.length),
         onOffer: catalog.onOffer ?? (index < 8 || index % 4 === 0),
         featured: catalog.featured ?? (index < 10 || index % 6 === 0),
         badge: badgeFor(index),
         tags: [...new Set([...(catalog.categoryTags || []), productTypeSlug, ...(catalog.tags || [])])],
-        dataSource: "manual",
-        syncStatus: "fallback"
+        importedFromMercadoLivre: Boolean(catalog.importedFromMercadoLivre),
+        importedManual: Boolean(catalog.importedManual),
+        importedAt: catalog.importedAt || null,
+        manualDataUpdatedAt: catalog.manualDataUpdatedAt || null,
+        updatedAt: catalog.updatedAt || null,
+        syncWarning: catalog.syncWarning || null,
+        dataSource: catalog.dataSource || "manual",
+        syncStatus: catalog.syncStatus || "fallback"
       };
 
       if (product.id === "tech-001" || product.meliId) {
@@ -290,6 +391,15 @@ function mergeProductData(product, mercadoLivreData) {
   }
   if (mercadoLivreData.syncStatus === "error") {
     console.log(`[ML SYNC] Fallback manual para ${product.id}: erro Mercado Livre: ${mercadoLivreData.errorMessage || "erro desconhecido"}`);
+    if (product.importedFromMercadoLivre && Number.isFinite(Number(product.price)) && Number(product.price) > 0) {
+      return {
+        ...product,
+        dataSource: "mercadolivre-partial",
+        syncStatus: "partial",
+        syncWarning: mercadoLivreData.errorMessage || "Preco manual porque ML bloqueou API",
+        syncError: mercadoLivreData.errorMessage || "Falha ao sincronizar com Mercado Livre"
+      };
+    }
     return {
       ...product,
       syncStatus: "error",
@@ -483,6 +593,13 @@ async function getCatalogProducts() {
   });
 
   importedProducts.forEach((product, index) => {
+    if (product.adminDeleted) {
+      const key = getCatalogKey(product);
+      productsByKey.delete(key);
+      if (product.id) productsByKey.delete(`id:${product.id}`);
+      if (product.sku) productsByKey.delete(`sku:${product.sku}`);
+      return;
+    }
     const key = getCatalogKey(product);
     const existing = productsByKey.get(key);
     if (existing) {
@@ -524,12 +641,15 @@ async function writeImportedProducts(products) {
   await fs.writeFile(importedProductsFile, `${JSON.stringify({ products }, null, 2)}\n`);
 }
 
-function buildImportedProduct({ existingProduct, mercadoLivreData, meliId, category, affiliateUrl, tags, featured, manualPrice }) {
+function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreError, meliId, category, affiliateUrl, tags, featured, available, manualPrice }) {
   const id = existingProduct?.id || `meli-${meliId.toLowerCase()}`;
   const sku = existingProduct?.sku || `meli-${meliId}`;
   const title = mercadoLivreData?.title || existingProduct?.name || meliId;
   const productType = category || existingProduct?.productType || "Mercado Livre";
   const categorySlug = slugify(category);
+  const hasMercadoLivrePrice = Number.isFinite(Number(mercadoLivreData?.price)) && Number(mercadoLivreData?.price) > 0;
+  const hasManualPrice = Number.isFinite(Number(manualPrice)) && Number(manualPrice) > 0;
+  const syncStatus = hasMercadoLivrePrice ? "synced" : "partial";
 
   return {
     id,
@@ -541,13 +661,23 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, meliId, categ
     categoryTags: [categorySlug],
     productType,
     description: existingProduct?.description || title,
+    images: mercadoLivreData?.images || existingProduct?.images || [],
+    heroImage: mercadoLivreData?.heroImage || mercadoLivreData?.images?.[0] || existingProduct?.heroImage || "/imagens/logo/logo.png",
     tags: [...new Set(tags)],
     affiliateUrl,
-    price: mercadoLivreData?.price ?? manualPrice ?? existingProduct?.price ?? null,
+    price: hasMercadoLivrePrice ? Number(mercadoLivreData.price) : hasManualPrice ? Number(manualPrice) : existingProduct?.price ?? null,
     oldPrice: mercadoLivreData?.oldPrice ?? existingProduct?.oldPrice ?? null,
+    available: Boolean(available ?? mercadoLivreData?.available ?? existingProduct?.available ?? true),
+    badge: existingProduct?.badge || "Importado",
+    rating: mercadoLivreData?.rating ?? existingProduct?.rating ?? null,
+    reviews: mercadoLivreData?.reviews ?? mercadoLivreData?.soldQuantity ?? existingProduct?.reviews ?? null,
+    mercadoLivrePermalink: mercadoLivreData?.permalink || existingProduct?.mercadoLivrePermalink || null,
     featured: Boolean(featured),
     importedFromMercadoLivre: true,
-    importedAt: new Date().toISOString()
+    importedAt: new Date().toISOString(),
+    dataSource: syncStatus === "synced" ? "mercadolivre" : "mercadolivre-partial",
+    syncStatus,
+    syncWarning: syncStatus === "partial" ? mercadoLivreError || "Preco indisponivel pela API do Mercado Livre; usando preco manual quando informado" : null
   };
 }
 
@@ -600,6 +730,21 @@ function validateManualProductUpdates(updates) {
   if (Object.prototype.hasOwnProperty.call(updates, "tags")) {
     allowed.tags = normalizeTags(updates.tags);
   }
+  if (Object.prototype.hasOwnProperty.call(updates, "name")) {
+    const name = String(updates.name || "").trim();
+    if (!name) throw createPublicError("name não pode ficar vazio.", 400);
+    allowed.name = name;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "description")) {
+    allowed.description = String(updates.description || "").trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "badge")) {
+    allowed.badge = String(updates.badge || "").trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "images")) {
+    allowed.images = normalizeImageList(updates.images);
+    allowed.heroImage = allowed.images[0] || "/imagens/logo/logo.png";
+  }
 
   return allowed;
 }
@@ -638,8 +783,26 @@ function normalizeTags(tags) {
   return [];
 }
 
+function normalizeImageList(images) {
+  if (Array.isArray(images)) return images.map((image) => String(image).trim()).filter(Boolean);
+  if (typeof images === "string") return images.split("\n").flatMap((line) => line.split(",")).map((image) => image.trim()).filter(Boolean);
+  return [];
+}
+
+function uniqueImportedId(products, seed) {
+  const base = `admin-${slugify(seed || "produto")}`.replace(/-+$/g, "") || "admin-produto";
+  const existing = new Set(products.map((product) => product.id));
+  if (!existing.has(base)) return base;
+  let index = 2;
+  while (existing.has(`${base}-${index}`)) index += 1;
+  return `${base}-${index}`;
+}
+
 function upsertImportedProduct(products, product) {
-  const index = products.findIndex((item) => item.meliId === product.meliId || item.id === product.id);
+  const index = products.findIndex((item) => {
+    if (product.meliId && item.meliId === product.meliId) return true;
+    return item.id === product.id;
+  });
   if (index === -1) return [...products, product];
   const nextProducts = [...products];
   nextProducts[index] = { ...nextProducts[index], ...product, updatedAt: new Date().toISOString() };
@@ -650,11 +813,11 @@ function toRuntimeProduct(importedProduct, existingProduct) {
   return {
     ...(existingProduct || {}),
     ...importedProduct,
-    images: existingProduct?.images || [],
-    heroImage: existingProduct?.heroImage || "/imagens/logo/logo.png",
-    available: existingProduct?.available ?? false,
-    dataSource: "manual",
-    syncStatus: "fallback"
+    images: importedProduct.images?.length ? importedProduct.images : existingProduct?.images || [],
+    heroImage: importedProduct.heroImage || existingProduct?.heroImage || "/imagens/logo/logo.png",
+    available: importedProduct.available ?? existingProduct?.available ?? true,
+    dataSource: importedProduct.dataSource || "manual",
+    syncStatus: importedProduct.syncStatus || "fallback"
   };
 }
 

@@ -4,128 +4,257 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex,nofollow" />
-    <meta name="theme-color" content="#050816" />
+    <meta name="theme-color" content="#07090f" />
     <link rel="icon" href="/imagens/logo/logo.png" />
     <link rel="stylesheet" href="/public/admin.css" />
-    <title>Admin SMShop</title>
+    <title>SMShop Admin</title>
   </head>
   <body>
-    <main class="admin-shell">
-      <section class="login-panel" data-login-panel>
-        <img src="/imagens/logo/logo.png" alt="SMShop" />
-        <h1>Admin SMShop</h1>
-        <p>Entre para importar produtos e editar dados manuais com segurança.</p>
-        <form data-login-form>
+    <main class="app-shell">
+      <section class="login-screen" data-login-view>
+        <form class="login-panel" data-login-form>
+          <img src="/imagens/logo/logo.png" alt="SMShop" />
+          <span class="eyebrow">Admin seguro</span>
+          <h1>SMShop Dashboard</h1>
+          <p>Gerencie produtos, importacao Mercado Livre, alertas e cliques da loja.</p>
           <label>
-            Senha
-            <input type="password" name="password" autocomplete="current-password" required />
+            Senha administrativa
+            <input name="password" type="password" autocomplete="current-password" required autofocus />
           </label>
           <button type="submit">Entrar</button>
+          <p class="message" data-login-status aria-live="polite"></p>
         </form>
       </section>
 
-      <section class="dashboard" data-dashboard hidden>
-        <header class="admin-header">
+      <section class="dashboard" data-dashboard-view hidden>
+        <header class="topbar">
           <div>
-            <span>Painel interno</span>
-            <h1>Catálogo SMShop</h1>
+            <span class="eyebrow">SMShop Admin</span>
+            <h1>Dashboard</h1>
           </div>
-          <button type="button" class="ghost-button" data-logout>Sair</button>
+          <div class="toolbar">
+            <button type="button" class="ghost" data-action="refresh">Atualizar</button>
+            <button type="button" class="ghost" data-action="sync-all">Sincronizar</button>
+            <button type="button" data-action="focus-import">Importar</button>
+            <button type="button" class="danger" data-action="logout">Sair</button>
+          </div>
         </header>
 
-        <div class="status-bar" data-status>Pronto.</div>
+        <div class="message" data-status aria-live="polite"></div>
 
-        <section class="admin-grid">
-          <form class="admin-card import-card" data-import-form>
-            <div class="section-heading">
-              <span>Mercado Livre</span>
-              <h2>Importar produto</h2>
+        <section class="stats-grid" data-kpis></section>
+
+        <section class="panel attention">
+          <div class="panel-title">
+            <div>
+              <span class="eyebrow">Atenção necessária</span>
+              <h2>Alertas importantes</h2>
+            </div>
+            <strong data-alert-count>0</strong>
+          </div>
+          <div class="alert-grid" data-alerts></div>
+        </section>
+
+        <section class="form-grid">
+          <form class="panel stack" data-import-form>
+            <div class="panel-title">
+              <div>
+                <span class="eyebrow">Mercado Livre</span>
+                <h2>Importar produto</h2>
+              </div>
             </div>
             <label>
-              URL do Mercado Livre ou MLB ID
-              <input name="input" placeholder="https://... ou MLB6419155018" required />
+              URL Mercado Livre, MLB ID ou meli.la
+              <input name="input" placeholder="MLB66266661 ou https://meli.la/..." required />
             </label>
             <label>
-              Link afiliado
+              Affiliate URL
               <input name="affiliateUrl" placeholder="https://meli.la/seu-link" required />
             </label>
-            <div class="two-columns">
+            <div class="two-cols">
               <label>
                 Categoria
                 <input name="category" value="Tecnologia" required />
               </label>
               <label>
                 Preço manual opcional
-                <input name="price" type="number" min="0" step="0.01" placeholder="166.66" />
+                <input name="price" type="number" min="0" step="0.01" inputmode="decimal" />
               </label>
             </div>
             <label>
               Tags
-              <input name="tags" placeholder="tecnologia, smartwatch" />
+              <input name="tags" placeholder="smartwatch, oferta, tecnologia" />
             </label>
-            <label class="check-row">
-              <input name="featured" type="checkbox" />
-              Destaque
-            </label>
-            <button type="submit">Importar produto</button>
+            <div class="switch-row">
+              <label><input name="featured" type="checkbox" /> Destaque</label>
+              <label><input name="available" type="checkbox" checked /> Disponível</label>
+            </div>
+            <button type="submit">Importar e publicar</button>
           </form>
 
-          <form class="admin-card edit-card" data-edit-form hidden>
-            <div class="section-heading">
-              <span data-edit-id>Produto</span>
-              <h2>Edição rápida</h2>
+          <form class="panel stack" data-manual-form>
+            <div class="panel-title">
+              <div>
+                <span class="eyebrow">Manual</span>
+                <h2>Cadastrar produto</h2>
+              </div>
             </div>
             <label>
-              Link afiliado
-              <input name="affiliateUrl" required />
+              Nome
+              <input name="name" required />
             </label>
-            <div class="two-columns">
+            <div class="two-cols">
               <label>
                 Preço
-                <input name="price" type="number" min="0" step="0.01" required />
+                <input name="price" type="number" min="0" step="0.01" inputmode="decimal" required />
               </label>
               <label>
-                Preço antigo
-                <input name="oldPrice" type="number" min="0" step="0.01" />
+                Categoria
+                <input name="category" value="Tecnologia" required />
               </label>
             </div>
             <label>
-              Categoria
-              <input name="category" required />
+              Affiliate URL
+              <input name="affiliateUrl" required />
+            </label>
+            <label>
+              Imagem principal
+              <input name="heroImage" placeholder="https://... ou /imagens/..." />
+            </label>
+            <label>
+              Imagens adicionais
+              <textarea name="images" rows="3" placeholder="Uma URL por linha"></textarea>
+            </label>
+            <label>
+              Descrição
+              <textarea name="description" rows="3"></textarea>
             </label>
             <label>
               Tags
-              <input name="tags" />
+              <input name="tags" placeholder="casa, gadget, oferta" />
             </label>
-            <div class="toggle-grid">
-              <label class="check-row">
-                <input name="available" type="checkbox" />
-                Disponível
-              </label>
-              <label class="check-row">
-                <input name="featured" type="checkbox" />
-                Destaque
-              </label>
+            <div class="switch-row">
+              <label><input name="featured" type="checkbox" /> Destaque</label>
+              <label><input name="available" type="checkbox" checked /> Disponível</label>
             </div>
-            <div class="button-row">
-              <button type="submit">Salvar alterações</button>
-              <button type="button" class="ghost-button" data-cancel-edit>Cancelar</button>
-            </div>
+            <button type="submit">Criar produto</button>
           </form>
         </section>
 
-        <section class="products-section">
-          <div class="section-heading list-heading">
+        <section class="panel">
+          <div class="panel-title product-title">
             <div>
-              <span>Produtos cadastrados</span>
-              <h2>Catálogo atual</h2>
+              <span class="eyebrow">Catálogo</span>
+              <h2>Produtos</h2>
             </div>
-            <button type="button" class="ghost-button" data-refresh>Atualizar</button>
+            <div class="filters">
+              <input data-filter="search" placeholder="Buscar produto" />
+              <select data-filter="category"></select>
+              <select data-filter="status">
+                <option value="">Todos status</option>
+                <option value="synced">Synced</option>
+                <option value="partial">Partial</option>
+                <option value="fallback">Fallback</option>
+                <option value="error">Error</option>
+              </select>
+            </div>
           </div>
-          <div class="products-list" data-products-list></div>
+          <div class="product-list" data-products></div>
+        </section>
+
+        <section class="insight-grid">
+          <article class="panel">
+            <div class="panel-title">
+              <div>
+                <span class="eyebrow">Analytics</span>
+                <h2>Mais clicados</h2>
+              </div>
+            </div>
+            <div data-top-clicks></div>
+          </article>
+          <article class="panel">
+            <div class="panel-title">
+              <div>
+                <span class="eyebrow">Histórico</span>
+                <h2>Últimos cliques</h2>
+              </div>
+            </div>
+            <div data-recent-clicks></div>
+          </article>
+          <article class="panel">
+            <div class="panel-title">
+              <div>
+                <span class="eyebrow">Sync</span>
+                <h2>Relatório</h2>
+              </div>
+            </div>
+            <div data-sync-report></div>
+          </article>
         </section>
       </section>
     </main>
+
+    <dialog class="editor" data-editor>
+      <form class="editor-panel stack" data-edit-form>
+        <div class="panel-title">
+          <div>
+            <span class="eyebrow" data-edit-subtitle>Produto</span>
+            <h2>Editar produto</h2>
+          </div>
+          <button type="button" class="icon-button" data-edit-close aria-label="Fechar">×</button>
+        </div>
+        <input name="id" type="hidden" />
+        <label>
+          Nome
+          <input name="name" required />
+        </label>
+        <div class="two-cols">
+          <label>
+            Preço
+            <input name="price" type="number" min="0" step="0.01" inputmode="decimal" required />
+          </label>
+          <label>
+            Preço antigo
+            <input name="oldPrice" type="number" min="0" step="0.01" inputmode="decimal" />
+          </label>
+        </div>
+        <label>
+          Affiliate URL
+          <input name="affiliateUrl" required />
+        </label>
+        <div class="two-cols">
+          <label>
+            Categoria
+            <input name="category" required />
+          </label>
+          <label>
+            Badge
+            <input name="badge" />
+          </label>
+        </div>
+        <label>
+          Tags
+          <input name="tags" />
+        </label>
+        <label>
+          Imagens
+          <textarea name="images" rows="4"></textarea>
+        </label>
+        <label>
+          Descrição
+          <textarea name="description" rows="4"></textarea>
+        </label>
+        <div class="switch-row">
+          <label><input name="featured" type="checkbox" /> Destaque</label>
+          <label><input name="available" type="checkbox" /> Disponível</label>
+        </div>
+        <div class="modal-actions">
+          <button type="submit">Salvar</button>
+          <button type="button" class="ghost" data-edit-sync>Sincronizar</button>
+          <button type="button" class="danger" data-edit-delete>Excluir</button>
+        </div>
+      </form>
+    </dialog>
 
     <script type="module" src="/public/admin.js"></script>
   </body>
