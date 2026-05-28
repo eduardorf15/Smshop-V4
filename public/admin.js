@@ -26,7 +26,12 @@ boot();
 async function boot() {
   initCategorySelects();
   bindEvents();
-  await refreshAll();
+  await Promise.all([loadDashboard(), loadProducts(), loadAlerts()]);
+  renderDashboard();
+  renderAlerts();
+  renderProducts();
+  renderAnalytics();
+  setMessage("Painel atualizado. Produtos prontos para venda.", "ok");
 }
 
 function bindEvents() {
@@ -46,19 +51,7 @@ function bindEvents() {
 async function refreshAll() {
   setMessage("Carregando painel emergencial...");
   try {
-    const [dashboardData, productsData, alertsData, analyticsData] = await Promise.all([
-      apiFetch("/api/admin/dashboard"),
-      apiFetch("/api/admin/products"),
-      apiFetch("/api/admin/alerts"),
-      apiFetch("/api/admin/analytics").catch(() => ({ analytics: null }))
-    ]);
-
-    state.dashboard = dashboardData.dashboard || {};
-    state.products = productsData.products || [];
-    state.alerts = alertsData.alerts || { total: 0, products: [], alerts: [] };
-    state.analytics = analyticsData.analytics || state.dashboard.analytics || null;
-
-    initCategorySelects();
+    await Promise.all([loadDashboard(), loadProducts(), loadAlerts()]);
     renderDashboard();
     renderAlerts();
     renderProducts();
@@ -67,6 +60,24 @@ async function refreshAll() {
   } catch (error) {
     setMessage(error.message, "error");
   }
+}
+
+async function loadDashboard() {
+  const dashboardData = await apiFetch("/api/admin/dashboard");
+  const analyticsData = await apiFetch("/api/admin/analytics").catch(() => ({ analytics: null }));
+  state.dashboard = dashboardData.dashboard || {};
+  state.analytics = analyticsData.analytics || state.dashboard.analytics || null;
+}
+
+async function loadProducts() {
+  const productsData = await apiFetch("/api/admin/products");
+  state.products = productsData.products || [];
+  initCategorySelects();
+}
+
+async function loadAlerts() {
+  const alertsData = await apiFetch("/api/admin/alerts");
+  state.alerts = alertsData.alerts || { total: 0, products: [], alerts: [] };
 }
 
 async function onImport(event) {

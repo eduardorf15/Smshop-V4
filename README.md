@@ -4,7 +4,7 @@ Loja afiliada premium, leve e modular, criada com HTML5, CSS3, JavaScript ES Mod
 
 ## Visão geral
 
-SMShop V4 é uma vitrine afiliada premium para tecnologia, gadgets, smartwatches, fones e casa inteligente. A home foi desenhada para branding, confiança e conversão. O catálogo fica nas páginas de produtos e categorias, com cards espaçosos, modal de galeria, favoritos persistentes e links afiliados.
+SMShop V4 é uma vitrine afiliada premium para tecnologia, gadgets, smartwatches, fones e casa inteligente. A home foi criada para branding, confiança e conversão. O catálogo fica nas páginas de produtos e categorias, com cards espaçosos, modal de galeria, favoritos persistentes e links afiliados.
 
 O projeto não usa React, Next, Vue, Netlify Functions ou `netlify.toml`.
 

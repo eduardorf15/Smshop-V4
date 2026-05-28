@@ -26,6 +26,20 @@ app.use(compression());
 app.use(express.json({ limit: "64kb" }));
 app.use(express.urlencoded({ extended: true }));
 
+app.get("/public/admin.js", (_req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  res.sendFile(path.join(rootDir, "public", "admin.js"));
+});
+
+app.get("/public/admin.css", (_req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  res.sendFile(path.join(rootDir, "public", "admin.css"));
+});
+
 app.use(
   "/src",
   express.static(path.join(rootDir, "src"), {

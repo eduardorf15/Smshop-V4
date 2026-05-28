@@ -231,9 +231,9 @@ function bindLeadPopup() {
   const form = document.querySelector("[data-lead-form]");
   document.querySelector("[data-lead-close]")?.addEventListener("click", () => popup.close());
   setTimeout(() => {
-    if (!sessionStorage.getItem("smshop:v4:lead-shown") && !popup.open) {
+    if (!localStorage.getItem("smshop:v4:lead-shown") && !popup.open) {
       popup.showModal();
-      sessionStorage.setItem("smshop:v4:lead-shown", "true");
+      localStorage.setItem("smshop:v4:lead-shown", "true");
     }
   }, 6000);
   form?.addEventListener("submit", async (event) => {

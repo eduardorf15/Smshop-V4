@@ -103,6 +103,14 @@ p, label, select { color: var(--muted); }
   text-transform: uppercase;
 }
 
+.admin-version {
+  display: inline-flex;
+  margin-bottom: 8px;
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .panel, .editor-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
