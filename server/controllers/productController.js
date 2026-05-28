@@ -5,6 +5,7 @@ import {
   refreshProductsCache,
   syncProductsWithMercadoLivre
 } from "../services/productService.js";
+import { officialCategories } from "../../src/data/categories.js";
 
 export async function getProducts(req, res, next) {
   try {
@@ -103,7 +104,7 @@ export async function refreshProductCache(req, res, next) {
 export async function getProductSummary(_req, res, next) {
   try {
     const products = await listProducts();
-    const categories = [...new Set(products.map((product) => product.category))];
+    const categories = [...new Set([...officialCategories.map((category) => category.name), ...products.map((product) => product.category).filter(Boolean)])];
     const productTypes = [...new Set(products.map((product) => product.productType))];
     res.json({
       ok: true,

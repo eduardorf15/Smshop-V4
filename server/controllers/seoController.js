@@ -1,6 +1,7 @@
 import { listProducts } from "../services/productService.js";
+import { officialCategories } from "../../src/data/categories.js";
 
-const routes = ["/", "/produtos", "/categoria/tecnologia", "/favoritos", "/ofertas", "/contato", "/sobre", "/politica", "/termos"];
+const routes = ["/", "/produtos", ...officialCategories.map((category) => `/categoria/${category.slug}`), "/favoritos", "/ofertas", "/contato", "/sobre", "/politica", "/termos"];
 
 export function getRobots(req, res) {
   const siteUrl = getSiteUrl(req);

@@ -1,71 +1,71 @@
-const tokenKey = "smshop:admin:token";
+import { defaultCategoryName, officialCategories } from "../src/data/categories.js";
 
 const state = {
   products: [],
-  dashboard: null,
+  dashboard: {},
   analytics: null,
-  syncReport: null,
   alerts: { total: 0, products: [], alerts: [] },
   filters: { search: "", category: "", status: "" },
   editing: null
 };
 
 const nodes = {
-  loginView: document.querySelector("[data-login-view]"),
-  dashboardView: document.querySelector("[data-dashboard-view]"),
-  loginForm: document.querySelector("[data-login-form]"),
-  loginStatus: document.querySelector("[data-login-status]"),
   status: document.querySelector("[data-status]"),
   kpis: document.querySelector("[data-kpis]"),
   alerts: document.querySelector("[data-alerts]"),
   alertCount: document.querySelector("[data-alert-count]"),
   products: document.querySelector("[data-products]"),
   editor: document.querySelector("[data-editor]"),
-  editForm: document.querySelector("[data-edit-form]")
+  editForm: document.querySelector("[data-edit-form]"),
+  importForm: document.querySelector("[data-import-form]"),
+  manualForm: document.querySelector("[data-manual-form]")
 };
 
 boot();
 
-function boot() {
+async function boot() {
+  initCategorySelects();
   bindEvents();
-  if (getToken()) {
-    showDashboard();
-    refreshAll();
-  }
+  await refreshAll();
 }
 
 function bindEvents() {
-  nodes.loginForm.addEventListener("submit", onLogin);
-  document.querySelector("[data-import-form]").addEventListener("submit", onImport);
-  document.querySelector("[data-manual-form]").addEventListener("submit", onManualCreate);
+  nodes.importForm.addEventListener("submit", onImport);
+  nodes.manualForm.addEventListener("submit", onManualCreate);
   nodes.editForm.addEventListener("submit", onEditSave);
   document.querySelector("[data-edit-close]").addEventListener("click", closeEditor);
   document.querySelector("[data-edit-sync]").addEventListener("click", () => syncProduct(state.editing?.id));
   document.querySelector("[data-edit-delete]").addEventListener("click", () => deleteProduct(state.editing?.id));
   document.body.addEventListener("click", onActionClick);
   document.querySelectorAll("[data-filter]").forEach((field) => field.addEventListener("input", onFilter));
+  nodes.editor.addEventListener("click", (event) => {
+    if (event.target === nodes.editor) closeEditor();
+  });
 }
 
-async function onLogin(event) {
-  event.preventDefault();
-  const password = new FormData(nodes.loginForm).get("password");
-  setBusy(nodes.loginForm, true);
-  setMessage(nodes.loginStatus, "Entrando...");
-
+async function refreshAll() {
+  setMessage("Carregando painel emergencial...");
   try {
-    const data = await apiFetch("/api/admin/login", {
-      method: "POST",
-      body: JSON.stringify({ password })
-    }, { skipAuth: true });
-    sessionStorage.setItem(tokenKey, data.token);
-    nodes.loginForm.reset();
-    showDashboard();
-    await refreshAll();
-    setMessage(nodes.status, "Login realizado.", "ok");
+    const [dashboardData, productsData, alertsData, analyticsData] = await Promise.all([
+      apiFetch("/api/admin/dashboard"),
+      apiFetch("/api/admin/products"),
+      apiFetch("/api/admin/alerts"),
+      apiFetch("/api/admin/analytics").catch(() => ({ analytics: null }))
+    ]);
+
+    state.dashboard = dashboardData.dashboard || {};
+    state.products = productsData.products || [];
+    state.alerts = alertsData.alerts || { total: 0, products: [], alerts: [] };
+    state.analytics = analyticsData.analytics || state.dashboard.analytics || null;
+
+    initCategorySelects();
+    renderDashboard();
+    renderAlerts();
+    renderProducts();
+    renderAnalytics();
+    setMessage("Painel atualizado. Produtos prontos para venda.", "ok");
   } catch (error) {
-    setMessage(nodes.loginStatus, error.message, "error");
-  } finally {
-    setBusy(nodes.loginForm, false);
+    setMessage(error.message, "error");
   }
 }
 
@@ -73,31 +73,30 @@ async function onImport(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = new FormData(form);
-  setBusy(form, true);
-  setMessage(nodes.status, "Importando produto do Mercado Livre...");
+  const payload = {
+    input: text(data, "input"),
+    affiliateUrl: text(data, "affiliateUrl"),
+    category: text(data, "category") || defaultCategoryName,
+    tags: splitTags(text(data, "tags")),
+    price: numberOrNull(text(data, "price")),
+    featured: data.has("featured"),
+    available: data.has("available")
+  };
+  if (payload.price === null) delete payload.price;
 
+  setBusy(form, true);
+  setMessage("Importando produto do Mercado Livre...");
   try {
-    const payload = {
-      input: text(data, "input"),
-      affiliateUrl: text(data, "affiliateUrl"),
-      category: text(data, "category") || "Tecnologia",
-      tags: splitTags(text(data, "tags")),
-      price: numberOrNull(text(data, "price")),
-      featured: data.has("featured"),
-      available: data.has("available")
-    };
-    if (payload.price === null) delete payload.price;
     const result = await apiFetch("/api/admin/import-mercadolivre", {
       method: "POST",
       body: JSON.stringify(payload)
     });
     form.reset();
-    form.elements.category.value = "Tecnologia";
-    form.elements.available.checked = true;
+    resetFormDefaults(form);
     await refreshAll();
-    setMessage(nodes.status, `Produto publicado: ${result.product?.name || result.product?.id || "importado"}.`, "ok");
+    setMessage(`Produto importado e publicado: ${result.product?.name || result.product?.id || "novo produto"}.`, "ok");
   } catch (error) {
-    setMessage(nodes.status, error.message, "error");
+    setMessage(error.message, "error");
   } finally {
     setBusy(form, false);
   }
@@ -107,32 +106,34 @@ async function onManualCreate(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = new FormData(form);
-  setBusy(form, true);
-  setMessage(nodes.status, "Criando produto manual...");
+  const payload = {
+    name: text(data, "name"),
+    price: Number(text(data, "price")),
+    oldPrice: numberOrNull(text(data, "oldPrice")),
+    affiliateUrl: text(data, "affiliateUrl"),
+    category: text(data, "category") || defaultCategoryName,
+    description: text(data, "description"),
+    images: mergeImages(text(data, "heroImage"), text(data, "images")),
+    tags: splitTags(text(data, "tags")),
+    badge: text(data, "badge") || "Curadoria",
+    featured: data.has("featured"),
+    available: data.has("available")
+  };
+  if (payload.oldPrice === null) delete payload.oldPrice;
 
+  setBusy(form, true);
+  setMessage("Cadastrando produto manual...");
   try {
-    const images = mergeImages(text(data, "heroImage"), text(data, "images"));
     const result = await apiFetch("/api/admin/products/manual", {
       method: "POST",
-      body: JSON.stringify({
-        name: text(data, "name"),
-        price: Number(text(data, "price")),
-        affiliateUrl: text(data, "affiliateUrl"),
-        category: text(data, "category") || "Tecnologia",
-        images,
-        description: text(data, "description"),
-        tags: splitTags(text(data, "tags")),
-        featured: data.has("featured"),
-        available: data.has("available")
-      })
+      body: JSON.stringify(payload)
     });
     form.reset();
-    form.elements.category.value = "Tecnologia";
-    form.elements.available.checked = true;
+    resetFormDefaults(form);
     await refreshAll();
-    setMessage(nodes.status, `Produto manual criado: ${result.product?.name || "produto"}.`, "ok");
+    setMessage(`Produto cadastrado e publicado: ${result.product?.name || payload.name}.`, "ok");
   } catch (error) {
-    setMessage(nodes.status, error.message, "error");
+    setMessage(error.message, "error");
   } finally {
     setBusy(form, false);
   }
@@ -143,32 +144,33 @@ async function onEditSave(event) {
   if (!state.editing) return;
 
   const data = new FormData(nodes.editForm);
-  setBusy(nodes.editForm, true);
-  setMessage(nodes.status, `Salvando ${state.editing.id}...`);
+  const oldPrice = numberOrNull(text(data, "oldPrice"));
+  const payload = {
+    name: text(data, "name"),
+    price: Number(text(data, "price")),
+    oldPrice,
+    affiliateUrl: text(data, "affiliateUrl"),
+    category: text(data, "category"),
+    description: text(data, "description"),
+    images: text(data, "images"),
+    tags: splitTags(text(data, "tags")),
+    badge: text(data, "badge"),
+    featured: data.has("featured"),
+    available: data.has("available")
+  };
 
+  setBusy(nodes.editForm, true);
+  setMessage(`Salvando ${state.editing.id}...`);
   try {
-    const oldPrice = numberOrNull(text(data, "oldPrice"));
     await apiFetch(`/api/admin/products/${encodeURIComponent(state.editing.id)}/manual-data`, {
       method: "PATCH",
-      body: JSON.stringify({
-        name: text(data, "name"),
-        price: Number(text(data, "price")),
-        oldPrice,
-        affiliateUrl: text(data, "affiliateUrl"),
-        category: text(data, "category"),
-        tags: splitTags(text(data, "tags")),
-        badge: text(data, "badge"),
-        featured: data.has("featured"),
-        available: data.has("available"),
-        images: text(data, "images"),
-        description: text(data, "description")
-      })
+      body: JSON.stringify(payload)
     });
     closeEditor();
     await refreshAll();
-    setMessage(nodes.status, "Produto atualizado e cache limpo.", "ok");
+    setMessage("Produto atualizado e publicado na loja.", "ok");
   } catch (error) {
-    setMessage(nodes.status, error.message, "error");
+    setMessage(error.message, "error");
   } finally {
     setBusy(nodes.editForm, false);
   }
@@ -177,14 +179,13 @@ async function onEditSave(event) {
 async function onActionClick(event) {
   const button = event.target.closest("[data-action]");
   if (!button) return;
-  const action = button.dataset.action;
-  const row = button.closest("[data-id]");
-  const id = row?.dataset.id || state.editing?.id || "";
 
-  if (action === "logout") logout();
+  const action = button.dataset.action;
+  const id = button.closest("[data-id]")?.dataset.id || state.editing?.id || "";
+
   if (action === "refresh") await refreshAll();
   if (action === "sync-all") await syncAll();
-  if (action === "focus-import") document.querySelector("[data-import-form] input")?.focus();
+  if (action === "focus-import") nodes.importForm.querySelector("input[name='input']")?.focus();
   if (action === "edit") openEditor(findProduct(id));
   if (action === "sync") await syncProduct(id);
   if (action === "delete") await deleteProduct(id);
@@ -195,85 +196,56 @@ function onFilter(event) {
   renderProducts();
 }
 
-async function refreshAll() {
-  setMessage(nodes.status, "Carregando produtos, relatórios e alertas...");
-  try {
-    const [dashboardData, productsData, syncData, alertsData, analyticsData] = await Promise.all([
-      apiFetch("/api/admin/dashboard"),
-      apiFetch("/api/admin/products"),
-      apiFetch("/api/admin/sync-report"),
-      apiFetch("/api/admin/alerts"),
-      apiFetch("/api/admin/analytics")
-    ]);
-    state.dashboard = dashboardData.dashboard || {};
-    state.products = productsData.products || [];
-    state.syncReport = syncData || {};
-    state.alerts = alertsData.alerts || { total: 0, products: [], alerts: [] };
-    state.analytics = analyticsData.analytics || state.dashboard.analytics || {};
-    renderDashboard();
-    renderAlerts();
-    renderProducts();
-    renderInsights();
-    setMessage(nodes.status, "Dashboard atualizado.", "ok");
-  } catch (error) {
-    setMessage(nodes.status, error.message, "error");
-  }
-}
-
 async function syncAll() {
-  setMessage(nodes.status, "Sincronizando todos os produtos com Mercado Livre...");
+  setMessage("Sincronizando produtos com Mercado Livre...");
   try {
     await apiFetch("/api/admin/products/refresh", { method: "POST" });
     await refreshAll();
-    setMessage(nodes.status, "Sincronização concluída.", "ok");
+    setMessage("Sincronização concluída.", "ok");
   } catch (error) {
-    setMessage(nodes.status, error.message, "error");
+    setMessage(error.message, "error");
   }
 }
 
 async function syncProduct(id) {
   if (!id) return;
-  setMessage(nodes.status, `Sincronizando ${id}...`);
+  setMessage(`Sincronizando ${id}...`);
   try {
     await apiFetch(`/api/admin/products/${encodeURIComponent(id)}/sync`, { method: "POST" });
     closeEditor();
     await refreshAll();
-    setMessage(nodes.status, `Produto ${id} sincronizado.`, "ok");
+    setMessage(`Produto ${id} sincronizado.`, "ok");
   } catch (error) {
-    setMessage(nodes.status, error.message, "error");
+    setMessage(error.message, "error");
   }
 }
 
 async function deleteProduct(id) {
   if (!id) return;
-  if (!window.confirm(`Excluir ou ocultar ${id} do catálogo público?`)) return;
-  setMessage(nodes.status, `Removendo ${id}...`);
+  if (!window.confirm(`Excluir ${id} do catálogo público?`)) return;
+
+  setMessage(`Excluindo ${id}...`);
   try {
     await apiFetch(`/api/admin/products/${encodeURIComponent(id)}`, { method: "DELETE" });
     closeEditor();
     await refreshAll();
-    setMessage(nodes.status, `Produto ${id} removido da loja.`, "ok");
+    setMessage(`Produto ${id} removido da loja.`, "ok");
   } catch (error) {
-    setMessage(nodes.status, error.message, "error");
+    setMessage(error.message, "error");
   }
 }
 
 function renderDashboard() {
   const dashboard = state.dashboard || {};
-  const analytics = state.analytics || dashboard.analytics || {};
-  const lastProduct = dashboard.lastProductAdded?.name || dashboard.latestProducts?.[0]?.name || "Nenhum";
   const cards = [
-    ["Total de produtos", dashboard.totalProducts],
-    ["Produtos ativos", dashboard.activeProducts],
-    ["Em destaque", dashboard.featuredProducts],
-    ["Automáticos", dashboard.automaticProducts],
+    ["Total", dashboard.totalProducts],
+    ["Ativos", dashboard.activeProducts],
+    ["Destaques", dashboard.featuredProducts],
     ["Manuais", dashboard.manualProducts],
-    ["Partial", dashboard.partialProducts],
+    ["Automáticos", dashboard.automaticProducts],
+    ["Parciais", dashboard.partialProducts],
     ["Com erro", dashboard.errorProducts],
-    ["Total de cliques", analytics.totalClicks],
-    ["Revisar preço", dashboard.needsPriceReviewProducts],
-    ["Último produto", lastProduct],
-    ["Último sync", formatDate(dashboard.lastSync)]
+    ["Revisar preço", dashboard.needsPriceReviewProducts]
   ];
 
   nodes.kpis.innerHTML = cards.map(([label, value]) => `
@@ -290,14 +262,14 @@ function renderAlerts() {
   const products = state.alerts.products || [];
   nodes.alertCount.textContent = String(state.alerts.total || 0);
   nodes.alerts.innerHTML = products.length
-    ? products.slice(0, 12).map((product) => `
+    ? products.slice(0, 16).map((product) => `
       <article class="alert-card ${product.alerts.some((alert) => alert.severity === "high") ? "is-high" : ""}">
         <div>
           <strong>${escapeHtml(product.name || product.id)}</strong>
-          <span>${escapeHtml(product.id)} · ${escapeHtml(product.syncStatus)} · ${escapeHtml(product.dataSource)}</span>
+          <span>${escapeHtml(product.id)} - ${escapeHtml(product.syncStatus)} - ${escapeHtml(product.dataSource)}</span>
         </div>
         <ul>${product.alerts.map((alert) => `<li>${escapeHtml(alert.title)}</li>`).join("")}</ul>
-        <button type="button" class="ghost" data-action="edit" data-id="${escapeHtml(product.id)}">Editar</button>
+        <button type="button" class="ghost" data-action="edit" data-id="${escapeAttr(product.id)}">Editar</button>
       </article>
     `).join("")
     : `<p class="empty">Nenhum alerta crítico agora.</p>`;
@@ -307,17 +279,18 @@ function renderProducts() {
   const products = filteredProducts();
   nodes.products.innerHTML = products.length
     ? products.map((product) => `
-      <article class="product-row" data-id="${escapeHtml(product.id)}">
-        <img src="${escapeAttr(product.heroImage || "/imagens/logo/logo.png")}" alt="${escapeAttr(product.name)}" loading="lazy" />
+      <article class="product-row" data-id="${escapeAttr(product.id)}">
+        <img src="${escapeAttr(product.heroImage || "/imagens/logo/logo.png")}" alt="${escapeAttr(product.name || product.id)}" loading="lazy" />
         <div class="product-main">
-          <h3>${escapeHtml(product.name)}</h3>
-          <p>${escapeHtml(product.affiliateUrl || "Sem affiliateUrl")}</p>
+          <h3>${escapeHtml(product.name || product.id)}</h3>
+          <p>${escapeHtml(product.affiliateUrl || "Sem link afiliado")}</p>
           <div class="meta-row">
             <span>${escapeHtml(product.category || "Sem categoria")}</span>
             <span>${formatPrice(product.price)}</span>
             <span>${escapeHtml(product.dataSource || "manual")}</span>
             <span>${escapeHtml(product.syncStatus || "fallback")}</span>
             <span>${product.available === false ? "indisponível" : "ativo"}</span>
+            ${product.featured ? "<span>destaque</span>" : ""}
           </div>
         </div>
         <div class="row-actions">
@@ -330,8 +303,19 @@ function renderProducts() {
     : `<p class="empty">Nenhum produto encontrado.</p>`;
 }
 
-function renderInsights() {
-  const analytics = state.analytics || {};
+function renderAnalytics() {
+  const analytics = state.analytics;
+  if (!analytics) {
+    const empty = `<p class="empty">Analytics ainda não disponível.</p>`;
+    document.querySelector("[data-analytics-summary]").innerHTML = empty;
+    document.querySelector("[data-top-clicks]").innerHTML = empty;
+    document.querySelector("[data-recent-clicks]").innerHTML = empty;
+    return;
+  }
+
+  document.querySelector("[data-analytics-summary]").innerHTML = `
+    <div class="mini-row"><strong>Total de cliques</strong><span>${Number(analytics.totalClicks || 0)}</span></div>
+  `;
   renderList("[data-top-clicks]", analytics.topProducts || [], (item) => `
     <strong>${escapeHtml(item.productName || item.productId)}</strong>
     <span>${Number(item.clicks || 0)} cliques</span>
@@ -340,18 +324,6 @@ function renderInsights() {
     <strong>${escapeHtml(item.productName || item.productId)}</strong>
     <span>${formatDate(item.clickedAt)}</span>
   `);
-
-  const report = state.syncReport || {};
-  const reportRows = [
-    ["Com MLB ID", report.withMeliId],
-    ["Synced", report.synced],
-    ["Partial", report.partial],
-    ["Fallback", report.fallback],
-    ["Error", report.error]
-  ];
-  document.querySelector("[data-sync-report]").innerHTML = reportRows.map(([label, value]) => `
-    <div class="mini-row"><strong>${escapeHtml(label)}</strong><span>${Number(value || 0)}</span></div>
-  `).join("");
 }
 
 function renderList(selector, items, renderItem) {
@@ -364,27 +336,28 @@ function renderList(selector, items, renderItem) {
 function renderCategoryFilter() {
   const select = document.querySelector("[data-filter='category']");
   const current = select.value;
-  const categories = [...new Set(state.products.map((product) => product.category).filter(Boolean))].sort();
-  select.innerHTML = `<option value="">Todas categorias</option>${categories.map((category) => `<option value="${escapeAttr(category)}">${escapeHtml(category)}</option>`).join("")}`;
-  select.value = current;
+  const options = getKnownCategoryNames();
+  select.innerHTML = `<option value="">Todas categorias</option>${options.map((category) => `<option value="${escapeAttr(category)}">${escapeHtml(category)}</option>`).join("")}`;
+  select.value = options.includes(current) ? current : "";
 }
 
 function openEditor(product) {
   if (!product) return;
   state.editing = product;
+  renderCategoryOptions(nodes.editForm.elements.category, getKnownCategoryNames(), product.category || defaultCategoryName);
   nodes.editForm.elements.id.value = product.id || "";
   nodes.editForm.elements.name.value = product.name || "";
   nodes.editForm.elements.price.value = product.price ?? "";
   nodes.editForm.elements.oldPrice.value = product.oldPrice ?? "";
   nodes.editForm.elements.affiliateUrl.value = product.affiliateUrl || "";
-  nodes.editForm.elements.category.value = product.category || "";
-  nodes.editForm.elements.badge.value = product.badge || "";
-  nodes.editForm.elements.tags.value = (product.tags || []).join(", ");
-  nodes.editForm.elements.images.value = (product.images || []).join("\n");
+  nodes.editForm.elements.category.value = product.category || defaultCategoryName;
   nodes.editForm.elements.description.value = product.description || "";
+  nodes.editForm.elements.images.value = (product.images || []).join("\n");
+  nodes.editForm.elements.tags.value = (product.tags || []).join(", ");
+  nodes.editForm.elements.badge.value = product.badge || "";
   nodes.editForm.elements.featured.checked = Boolean(product.featured);
   nodes.editForm.elements.available.checked = product.available !== false;
-  document.querySelector("[data-edit-subtitle]").textContent = `${product.id} · ${product.meliId || "manual"}`;
+  document.querySelector("[data-edit-subtitle]").textContent = `${product.id} - ${product.meliId || "manual"}`;
   nodes.editor.showModal();
 }
 
@@ -404,36 +377,44 @@ function filteredProducts() {
   });
 }
 
-async function apiFetch(url, options = {}, config = {}) {
-  const token = getToken();
+async function apiFetch(url, options = {}) {
   const response = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      ...(!config.skipAuth && token ? { "x-admin-token": token } : {}),
       ...(options.headers || {})
     }
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok === false) {
-    if (response.status === 401 && !config.skipAuth) logout();
     throw new Error(data.message || "Operação não concluída.");
   }
   return data;
 }
 
-function showDashboard() {
-  nodes.loginView.hidden = true;
-  nodes.dashboardView.hidden = false;
+function initCategorySelects() {
+  document.querySelectorAll("select[name='category']").forEach((select) => {
+    renderCategoryOptions(select, getKnownCategoryNames(), select.value || defaultCategoryName);
+  });
 }
 
-function logout() {
-  sessionStorage.removeItem(tokenKey);
-  nodes.dashboardView.hidden = true;
-  nodes.loginView.hidden = false;
-  state.products = [];
-  state.dashboard = null;
-  setMessage(nodes.loginStatus, "Sessão encerrada.");
+function renderCategoryOptions(select, categories, selectedValue = defaultCategoryName) {
+  const options = [...new Set([selectedValue, ...categories].filter(Boolean))];
+  select.innerHTML = options.map((category) => `<option value="${escapeAttr(category)}">${escapeHtml(category)}</option>`).join("");
+  select.value = selectedValue;
+}
+
+function getKnownCategoryNames() {
+  return [...new Set([
+    ...officialCategories.map((category) => category.name),
+    ...state.products.map((product) => product.category).filter(Boolean)
+  ])].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+function resetFormDefaults(form) {
+  form.elements.category.value = defaultCategoryName;
+  if (form.elements.available) form.elements.available.checked = true;
+  if (form.elements.featured) form.elements.featured.checked = false;
 }
 
 function setBusy(form, busy) {
@@ -442,17 +423,13 @@ function setBusy(form, busy) {
   });
 }
 
-function setMessage(node, message, type = "") {
-  node.textContent = message || "";
-  node.className = `message ${type}`.trim();
+function setMessage(message, type = "") {
+  nodes.status.textContent = message || "";
+  nodes.status.className = `message ${type}`.trim();
 }
 
 function findProduct(id) {
   return state.products.find((product) => product.id === id || product.sku === id);
-}
-
-function getToken() {
-  return sessionStorage.getItem(tokenKey) || "";
 }
 
 function text(formData, key) {

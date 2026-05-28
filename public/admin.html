@@ -4,193 +4,187 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex,nofollow" />
-    <meta name="theme-color" content="#07090f" />
+    <meta name="theme-color" content="#080a0f" />
     <link rel="icon" href="/imagens/logo/logo.png" />
     <link rel="stylesheet" href="/public/admin.css" />
-    <title>SMShop Admin</title>
+    <title>SMShop Admin Emergencial</title>
   </head>
   <body>
-    <main class="app-shell">
-      <section class="login-screen" data-login-view>
-        <form class="login-panel" data-login-form>
-          <img src="/imagens/logo/logo.png" alt="SMShop" />
-          <span class="eyebrow">Admin seguro</span>
-          <h1>SMShop Dashboard</h1>
-          <p>Gerencie produtos, importacao Mercado Livre, alertas e cliques da loja.</p>
+    <main class="admin-shell">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">Modo emergencial</span>
+          <h1>SMShop Admin</h1>
+          <p>Cadastre, importe, edite e publique produtos direto na loja.</p>
+        </div>
+        <div class="toolbar">
+          <a class="ghost-link" href="/produtos" target="_blank" rel="noopener">Ver loja</a>
+          <button type="button" class="ghost" data-action="refresh">Atualizar</button>
+          <button type="button" class="ghost" data-action="sync-all">Sincronizar ML</button>
+          <button type="button" data-action="focus-import">Importar agora</button>
+        </div>
+      </header>
+
+      <div class="message" data-status aria-live="polite"></div>
+
+      <section class="stats-grid" data-kpis></section>
+
+      <section class="panel attention">
+        <div class="panel-title">
+          <div>
+            <span class="eyebrow">Atenção necessária</span>
+            <h2>Alertas úteis</h2>
+          </div>
+          <strong data-alert-count>0</strong>
+        </div>
+        <div class="alert-grid" data-alerts></div>
+      </section>
+
+      <section class="form-grid">
+        <form class="panel stack" data-import-form>
+          <div class="panel-title">
+            <div>
+              <span class="eyebrow">Mercado Livre</span>
+              <h2>Importar produto</h2>
+            </div>
+          </div>
           <label>
-            Senha administrativa
-            <input name="password" type="password" autocomplete="current-password" required autofocus />
+            URL Mercado Livre, MLB ID ou meli.la
+            <input name="input" placeholder="MLB66266661 ou https://meli.la/..." required />
           </label>
-          <button type="submit">Entrar</button>
-          <p class="message" data-login-status aria-live="polite"></p>
+          <label>
+            Link afiliado obrigatório
+            <input name="affiliateUrl" placeholder="https://meli.la/seu-link" required />
+          </label>
+          <div class="two-cols">
+            <label>
+              Categoria
+              <select name="category" required></select>
+            </label>
+            <label>
+              Preço manual opcional
+              <input name="price" type="number" min="0" step="0.01" inputmode="decimal" />
+            </label>
+          </div>
+          <label>
+            Tags
+            <input name="tags" placeholder="idosos, mobilidade, oferta" />
+          </label>
+          <div class="switch-row">
+            <label><input name="featured" type="checkbox" /> Destaque</label>
+            <label><input name="available" type="checkbox" checked /> Disponível</label>
+          </div>
+          <button type="submit">Importar e publicar</button>
+        </form>
+
+        <form class="panel stack" data-manual-form>
+          <div class="panel-title">
+            <div>
+              <span class="eyebrow">Manual</span>
+              <h2>Cadastrar produto</h2>
+            </div>
+          </div>
+          <label>
+            Nome
+            <input name="name" required />
+          </label>
+          <div class="two-cols">
+            <label>
+              Preço
+              <input name="price" type="number" min="0" step="0.01" inputmode="decimal" required />
+            </label>
+            <label>
+              Preço antigo opcional
+              <input name="oldPrice" type="number" min="0" step="0.01" inputmode="decimal" />
+            </label>
+          </div>
+          <div class="two-cols">
+            <label>
+              Categoria
+              <select name="category" required></select>
+            </label>
+            <label>
+              Badge
+              <input name="badge" placeholder="Curadoria" />
+            </label>
+          </div>
+          <label>
+            Link afiliado
+            <input name="affiliateUrl" required />
+          </label>
+          <label>
+            Descrição
+            <textarea name="description" rows="3"></textarea>
+          </label>
+          <label>
+            Imagem principal
+            <input name="heroImage" placeholder="https://... ou /imagens/..." />
+          </label>
+          <label>
+            Imagens adicionais
+            <textarea name="images" rows="3" placeholder="Uma URL por linha"></textarea>
+          </label>
+          <label>
+            Tags
+            <input name="tags" placeholder="casa, cuidado, oferta" />
+          </label>
+          <div class="switch-row">
+            <label><input name="featured" type="checkbox" /> Destaque</label>
+            <label><input name="available" type="checkbox" checked /> Disponível</label>
+          </div>
+          <button type="submit">Cadastrar e publicar</button>
         </form>
       </section>
 
-      <section class="dashboard" data-dashboard-view hidden>
-        <header class="topbar">
+      <section class="panel">
+        <div class="panel-title product-title">
           <div>
-            <span class="eyebrow">SMShop Admin</span>
-            <h1>Dashboard</h1>
+            <span class="eyebrow">Catálogo</span>
+            <h2>Produtos publicados</h2>
           </div>
-          <div class="toolbar">
-            <button type="button" class="ghost" data-action="refresh">Atualizar</button>
-            <button type="button" class="ghost" data-action="sync-all">Sincronizar</button>
-            <button type="button" data-action="focus-import">Importar</button>
-            <button type="button" class="danger" data-action="logout">Sair</button>
+          <div class="filters">
+            <input data-filter="search" placeholder="Buscar produto, ID ou link" />
+            <select data-filter="category"></select>
+            <select data-filter="status">
+              <option value="">Todos status</option>
+              <option value="synced">Synced</option>
+              <option value="partial">Partial</option>
+              <option value="fallback">Fallback</option>
+              <option value="error">Error</option>
+            </select>
           </div>
-        </header>
+        </div>
+        <div class="product-list" data-products></div>
+      </section>
 
-        <div class="message" data-status aria-live="polite"></div>
-
-        <section class="stats-grid" data-kpis></section>
-
-        <section class="panel attention">
+      <section class="insight-grid">
+        <article class="panel">
           <div class="panel-title">
             <div>
-              <span class="eyebrow">Atenção necessária</span>
-              <h2>Alertas importantes</h2>
+              <span class="eyebrow">Analytics</span>
+              <h2>Resumo</h2>
             </div>
-            <strong data-alert-count>0</strong>
           </div>
-          <div class="alert-grid" data-alerts></div>
-        </section>
-
-        <section class="form-grid">
-          <form class="panel stack" data-import-form>
-            <div class="panel-title">
-              <div>
-                <span class="eyebrow">Mercado Livre</span>
-                <h2>Importar produto</h2>
-              </div>
-            </div>
-            <label>
-              URL Mercado Livre, MLB ID ou meli.la
-              <input name="input" placeholder="MLB66266661 ou https://meli.la/..." required />
-            </label>
-            <label>
-              Affiliate URL
-              <input name="affiliateUrl" placeholder="https://meli.la/seu-link" required />
-            </label>
-            <div class="two-cols">
-              <label>
-                Categoria
-                <input name="category" value="Tecnologia" required />
-              </label>
-              <label>
-                Preço manual opcional
-                <input name="price" type="number" min="0" step="0.01" inputmode="decimal" />
-              </label>
-            </div>
-            <label>
-              Tags
-              <input name="tags" placeholder="smartwatch, oferta, tecnologia" />
-            </label>
-            <div class="switch-row">
-              <label><input name="featured" type="checkbox" /> Destaque</label>
-              <label><input name="available" type="checkbox" checked /> Disponível</label>
-            </div>
-            <button type="submit">Importar e publicar</button>
-          </form>
-
-          <form class="panel stack" data-manual-form>
-            <div class="panel-title">
-              <div>
-                <span class="eyebrow">Manual</span>
-                <h2>Cadastrar produto</h2>
-              </div>
-            </div>
-            <label>
-              Nome
-              <input name="name" required />
-            </label>
-            <div class="two-cols">
-              <label>
-                Preço
-                <input name="price" type="number" min="0" step="0.01" inputmode="decimal" required />
-              </label>
-              <label>
-                Categoria
-                <input name="category" value="Tecnologia" required />
-              </label>
-            </div>
-            <label>
-              Affiliate URL
-              <input name="affiliateUrl" required />
-            </label>
-            <label>
-              Imagem principal
-              <input name="heroImage" placeholder="https://... ou /imagens/..." />
-            </label>
-            <label>
-              Imagens adicionais
-              <textarea name="images" rows="3" placeholder="Uma URL por linha"></textarea>
-            </label>
-            <label>
-              Descrição
-              <textarea name="description" rows="3"></textarea>
-            </label>
-            <label>
-              Tags
-              <input name="tags" placeholder="casa, gadget, oferta" />
-            </label>
-            <div class="switch-row">
-              <label><input name="featured" type="checkbox" /> Destaque</label>
-              <label><input name="available" type="checkbox" checked /> Disponível</label>
-            </div>
-            <button type="submit">Criar produto</button>
-          </form>
-        </section>
-
-        <section class="panel">
-          <div class="panel-title product-title">
+          <div data-analytics-summary></div>
+        </article>
+        <article class="panel">
+          <div class="panel-title">
             <div>
-              <span class="eyebrow">Catálogo</span>
-              <h2>Produtos</h2>
-            </div>
-            <div class="filters">
-              <input data-filter="search" placeholder="Buscar produto" />
-              <select data-filter="category"></select>
-              <select data-filter="status">
-                <option value="">Todos status</option>
-                <option value="synced">Synced</option>
-                <option value="partial">Partial</option>
-                <option value="fallback">Fallback</option>
-                <option value="error">Error</option>
-              </select>
+              <span class="eyebrow">Cliques</span>
+              <h2>Mais clicados</h2>
             </div>
           </div>
-          <div class="product-list" data-products></div>
-        </section>
-
-        <section class="insight-grid">
-          <article class="panel">
-            <div class="panel-title">
-              <div>
-                <span class="eyebrow">Analytics</span>
-                <h2>Mais clicados</h2>
-              </div>
+          <div data-top-clicks></div>
+        </article>
+        <article class="panel">
+          <div class="panel-title">
+            <div>
+              <span class="eyebrow">Histórico</span>
+              <h2>Últimos cliques</h2>
             </div>
-            <div data-top-clicks></div>
-          </article>
-          <article class="panel">
-            <div class="panel-title">
-              <div>
-                <span class="eyebrow">Histórico</span>
-                <h2>Últimos cliques</h2>
-              </div>
-            </div>
-            <div data-recent-clicks></div>
-          </article>
-          <article class="panel">
-            <div class="panel-title">
-              <div>
-                <span class="eyebrow">Sync</span>
-                <h2>Relatório</h2>
-              </div>
-            </div>
-            <div data-sync-report></div>
-          </article>
-        </section>
+          </div>
+          <div data-recent-clicks></div>
+        </article>
       </section>
     </main>
 
@@ -201,7 +195,7 @@
             <span class="eyebrow" data-edit-subtitle>Produto</span>
             <h2>Editar produto</h2>
           </div>
-          <button type="button" class="icon-button" data-edit-close aria-label="Fechar">×</button>
+          <button type="button" class="icon-button" data-edit-close aria-label="Fechar">x</button>
         </div>
         <input name="id" type="hidden" />
         <label>
@@ -219,13 +213,13 @@
           </label>
         </div>
         <label>
-          Affiliate URL
+          Link afiliado
           <input name="affiliateUrl" required />
         </label>
         <div class="two-cols">
           <label>
             Categoria
-            <input name="category" required />
+            <select name="category" required></select>
           </label>
           <label>
             Badge
@@ -233,23 +227,23 @@
           </label>
         </div>
         <label>
-          Tags
-          <input name="tags" />
+          Descrição
+          <textarea name="description" rows="4"></textarea>
         </label>
         <label>
           Imagens
-          <textarea name="images" rows="4"></textarea>
+          <textarea name="images" rows="4" placeholder="Uma URL por linha"></textarea>
         </label>
         <label>
-          Descrição
-          <textarea name="description" rows="4"></textarea>
+          Tags
+          <input name="tags" />
         </label>
         <div class="switch-row">
           <label><input name="featured" type="checkbox" /> Destaque</label>
           <label><input name="available" type="checkbox" /> Disponível</label>
         </div>
         <div class="modal-actions">
-          <button type="submit">Salvar</button>
+          <button type="submit">Salvar alterações</button>
           <button type="button" class="ghost" data-edit-sync>Sincronizar</button>
           <button type="button" class="danger" data-edit-delete>Excluir</button>
         </div>

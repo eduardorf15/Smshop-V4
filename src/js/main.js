@@ -4,6 +4,7 @@ import { closeProductModal, handleModalClick, handleModalKey, handleModalTouchEn
 import { renderAbout, renderContact, renderFavorites, renderHome, renderLoading, renderOffers, renderPolicy, renderProductDetail, renderProducts, renderTerms } from "./pages.js";
 import { applyTheme, getFavorites, initTheme, toggleFavorite, toggleTheme } from "./state.js";
 import { debounce, whatsappLink } from "./utils.js";
+import { getOfficialCategoryBySlug, slugifyCategory } from "../data/categories.js";
 
 const app = document.querySelector("#app");
 let products = [];
@@ -33,15 +34,17 @@ async function route() {
   const path = window.location.pathname;
   const params = new URLSearchParams(window.location.search);
   const category = params.get("category");
+  const routeCategorySlug = path.startsWith("/categoria/") ? decodeURIComponent(path.split("/").pop()) : "";
+  const routeCategory = getOfficialCategoryBySlug(routeCategorySlug);
   const tag = params.get("tag");
   let visibleProducts = [...products];
 
   if (category) visibleProducts = visibleProducts.filter((product) => matchesCategory(product, category));
+  if (routeCategorySlug) visibleProducts = visibleProducts.filter((product) => matchesCategory(product, routeCategorySlug));
   if (tag) visibleProducts = visibleProducts.filter((product) => product.tags.join(" ").toLowerCase().includes(tag.toLowerCase()));
-  if (path === "/categoria/tecnologia") visibleProducts = products;
 
   if (path.startsWith("/produto/")) renderProductDetail(app, products, decodeURIComponent(path.split("/").pop()));
-  else if (path === "/produtos" || path === "/categoria/tecnologia") await renderProducts(app, visibleProducts, path.includes("categoria") ? "Tecnologia" : "Produtos");
+  else if (path === "/produtos" || routeCategory) await renderProducts(app, visibleProducts, routeCategory?.name || "Produtos");
   else if (path === "/ofertas") await renderOffers(app, products);
   else if (path === "/favoritos") await renderFavorites(app, products);
   else if (path === "/contato") renderContact(app);
@@ -153,7 +156,6 @@ function bindPageEvents() {
       const tag = params.get("tag");
       if (category) list = list.filter((product) => matchesCategory(product, category));
       if (tag) list = list.filter((product) => product.tags.join(" ").toLowerCase().includes(tag.toLowerCase()));
-      if (window.location.pathname === "/categoria/tecnologia") list = list.filter((product) => product.categorySlug);
       list = sortProducts(list, sortTrigger?.dataset.sortValue || "");
       document.querySelector("[data-catalog-grid]").innerHTML = list.map((product) => productCard(product)).join("");
       document.querySelector("[data-result-count]").textContent = `${list.length} produtos`;
@@ -218,7 +220,7 @@ function bindSearch() {
     "input",
     debounce(() => {
       const term = input.value.toLowerCase();
-      const matches = products.filter((product) => `${product.name} ${product.category} ${product.productType || ""}`.toLowerCase().includes(term)).slice(0, 6);
+      const matches = products.filter((product) => `${product.name} ${product.category} ${product.productType || ""} ${product.tags.join(" ")}`.toLowerCase().includes(term)).slice(0, 6);
       results.innerHTML = matches.map((product) => productCard(product, { compact: true })).join("");
     }, 180)
   );
@@ -268,7 +270,7 @@ function sortProducts(list, sort) {
 }
 
 function matchesCategory(product, categorySlug) {
-  return product.categorySlug === categorySlug || product.productTypeSlug === categorySlug;
+  return product.categorySlug === categorySlug || product.productTypeSlug === categorySlug || product.tags.includes(categorySlug);
 }
 
 function normalizeProductCategory(product) {
@@ -278,8 +280,8 @@ function normalizeProductCategory(product) {
   const category = isLegacyCategory ? "Tecnologia" : product.category || "Tecnologia";
   const categorySlug = isLegacyCategory || !product.categorySlug ? "tecnologia" : product.categorySlug;
   const productType = product.productType || (isLegacyCategory ? product.category : "");
-  const productTypeSlug = product.productTypeSlug || (productType ? slugify(productType) : "");
-  const tags = new Set(["tecnologia", productTypeSlug, ...(product.tags || [])].filter(Boolean));
+  const productTypeSlug = product.productTypeSlug || (productType ? slugifyCategory(productType) : "");
+  const tags = new Set([categorySlug, productTypeSlug, ...(product.tags || [])].filter(Boolean));
 
   return {
     ...product,
@@ -289,15 +291,6 @@ function normalizeProductCategory(product) {
     productTypeSlug,
     tags: [...tags]
   };
-}
-
-function slugify(value) {
-  return String(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
 }
 
 function setPageGalleryImage(index) {

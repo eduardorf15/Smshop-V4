@@ -1,4 +1,4 @@
-const defaultCategoryName = "Tecnologia";
+import { defaultCategoryName, slugifyCategory } from "./categories.js";
 
 const rawProductCatalog = [
   {
@@ -306,15 +306,6 @@ export const productCatalog = rawProductCatalog.map((product) => ({
   meliId: product.meliId || null,
   meliUrl: product.meliUrl || null,
   category: product.category || defaultCategoryName,
-  categorySlug: product.categorySlug || slugify(product.category || defaultCategoryName),
-  categoryTags: [...new Set([...(product.categoryTags || []), product.categorySlug || slugify(product.category || defaultCategoryName)])]
+  categorySlug: product.categorySlug || slugifyCategory(product.category || defaultCategoryName),
+  categoryTags: [...new Set([...(product.categoryTags || []), product.categorySlug || slugifyCategory(product.category || defaultCategoryName)])]
 }));
-
-function slugify(value) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
-}

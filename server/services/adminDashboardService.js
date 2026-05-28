@@ -1,6 +1,7 @@
 import { getAnalyticsSummary } from "./adminAnalyticsService.js";
 import { getAdminAlerts } from "./adminAlertsService.js";
 import { getAdminProducts, getSyncReport } from "./productService.js";
+import { officialCategories } from "../../src/data/categories.js";
 
 export async function getAdminDashboard() {
   const [products, syncReport, analytics, alerts] = await Promise.all([getAdminProducts(), getSyncReport(), getAnalyticsSummary(), getAdminAlerts()]);
@@ -31,6 +32,11 @@ export async function getAdminDashboard() {
     errorProducts: products.filter((product) => product.syncStatus === "error").length,
     partialProducts: products.filter((product) => product.syncStatus === "partial").length,
     fallbackProducts: products.filter((product) => product.syncStatus === "fallback").length,
+    officialCategories: officialCategories.length,
+    categories: officialCategories.map((category) => ({
+      ...category,
+      products: products.filter((product) => product.categorySlug === category.slug).length
+    })),
     needsPriceReviewProducts: needsPriceReview.length,
     lastProductAdded,
     lastSync,

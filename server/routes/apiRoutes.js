@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { getProduct, getProducts, getProductSummary, refreshProductCache } from "../controllers/productController.js";
 import { receiveLead, receiveContact } from "../controllers/leadController.js";
-import { loginAdmin, requireAdminAuth } from "../services/adminAuthService.js";
 import { getAnalyticsSummary, recordProductClick } from "../services/adminAnalyticsService.js";
 import { getAdminAlerts } from "../services/adminAlertsService.js";
 import { getAdminDashboard } from "../services/adminDashboardService.js";
@@ -86,16 +85,6 @@ router.post("/api/analytics/click", async (req, res, next) => {
     next(error);
   }
 });
-
-router.post("/api/admin/login", (req, res, next) => {
-  try {
-    res.json({ ok: true, ...loginAdmin(req.body?.password) });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.use("/api/admin", requireAdminAuth);
 
 router.get("/api/admin/dashboard", async (_req, res, next) => {
   try {

@@ -1,6 +1,7 @@
 import { affiliateButton, productCard, sectionHeader, skeletonGrid } from "./components.js";
 import { getFavorites } from "./state.js";
 import { setTitle, whatsappLink } from "./utils.js";
+import { officialCategories } from "../data/categories.js";
 
 export async function renderHome(app, products) {
   setTitle("Home", "Curadoria de tecnologia, acessórios e achados para o dia a dia.");
@@ -80,6 +81,9 @@ export async function renderHome(app, products) {
 }
 
 export async function renderProducts(app, products, title = "Produtos") {
+  const categoryLinks = officialCategories
+    .map((category) => `<a href="/produtos?category=${category.slug}">${category.name}</a>`)
+    .join("");
   const pageDescription =
     title === "Ofertas do dia"
       ? "Ofertas escolhidas pra quem gosta de comprar bem sem perder tempo procurando."
@@ -117,7 +121,7 @@ export async function renderProducts(app, products, title = "Produtos") {
             <label><input type="search" data-catalog-search placeholder="Fone, smart, casa..." /></label>
           </div>
         </div>
-        <div class="filter-accordion"><button type="button" class="filter-accordion-title">Gênero</button><div class="filter-accordion-body"><a href="/produtos">Todos</a></div></div>
+        <div class="filter-accordion is-open"><button type="button" class="filter-accordion-title">Categorias</button><div class="filter-accordion-body"><a href="/produtos">Todas</a>${categoryLinks}</div></div>
         <div class="filter-accordion"><button type="button" class="filter-accordion-title">Tipo de Produto</button><div class="filter-accordion-body"><a href="/produtos?category=audio">Fones</a><a href="/produtos?category=smartwatch">Smartwatch</a><a href="/produtos?category=energia">Carregadores</a><a href="/produtos?category=creator">Setup</a></div></div>
         <div class="filter-accordion"><button type="button" class="filter-accordion-title">Tamanho</button><div class="filter-accordion-body"><span>Compacto</span><span>Portátil</span><span>Setup</span></div></div>
         <div class="filter-accordion"><button type="button" class="filter-accordion-title">Preço</button><div class="filter-accordion-body"><button type="button" data-sort-option value="price-asc">Menor preço</button><button type="button" data-sort-option value="price-desc">Maior preço</button></div></div>
@@ -130,7 +134,7 @@ export async function renderProducts(app, products, title = "Produtos") {
           <span data-result-count>${products.length} produtos</span>
           <button class="filter-trigger" data-filter-open aria-label="Abrir filtros"><span aria-hidden="true">≛</span></button>
         </div>
-        <div class="product-grid" data-catalog-grid>${products.map((product) => productCard(product)).join("")}</div>
+        <div class="product-grid" data-catalog-grid>${products.length ? products.map((product) => productCard(product)).join("") : emptyState("Nenhum produto nesta categoria ainda", "Esta categoria ja esta pronta para receber produtos importados ou cadastrados manualmente.")}</div>
       </div>
     </section>
   `;
@@ -274,15 +278,7 @@ export function renderLoading(app) {
 }
 
 function buildHomeCategories() {
-  return [
-    { name: "Tecnologia", slug: "tecnologia", image: "/fotosCategoria/tecnologia.png" },
-    { name: "Beleza e estética", slug: "beleza-estetica", image: "/fotosCategoria/beleza.png" },
-    { name: "Fitness e saúde", slug: "fitness", image: "/fotosCategoria/fitness.png" },
-    { name: "Moda", slug: "moda", image: "/fotosCategoria/moda.png" },
-    { name: "Casa", slug: "casa", image: "/fotosCategoria/casa.png" },
-    { name: "Pets", slug: "pets", image: "/fotosCategoria/pets.png" },
-    { name: "Infantil", slug: "infantil", image: "/fotosCategoria/infantil.png" }
-  ];
+  return officialCategories;
 }
 
 function getRelatedProducts(products, product) {
