@@ -104,6 +104,7 @@ async function loadMercadoLivreStatus() {
 async function onImport(event) {
   event.preventDefault();
   const form = event.currentTarget;
+  clearLocalMessage(form);
   const data = new FormData(form);
   const payload = {
     input: text(data, "input"),
@@ -118,6 +119,7 @@ async function onImport(event) {
 
   setBusy(form, true);
   setMessage("Importando produto do Mercado Livre...");
+  setLocalMessage(form, "Importando produto do Mercado Livre...", "warning");
   try {
     const result = await apiFetch("/api/admin/import-mercadolivre", {
       method: "POST",
@@ -126,9 +128,13 @@ async function onImport(event) {
     form.reset();
     resetFormDefaults(form);
     await refreshAll();
-    setMessage(importResultMessage(result.product), "ok");
+    const message = importResultMessage(result.product);
+    setMessage(message, "ok");
+    setLocalMessage(form, message, "ok");
   } catch (error) {
-    setMessage(error.message, "error");
+    const type = /bloqueou|use cadastro assistido|manual/i.test(error.message) ? "warning" : "error";
+    setMessage(error.message, type);
+    setLocalMessage(form, error.message, type);
   } finally {
     setBusy(form, false);
   }
@@ -137,6 +143,7 @@ async function onImport(event) {
 async function onManualCreate(event) {
   event.preventDefault();
   const form = event.currentTarget;
+  clearLocalMessage(form);
   const data = new FormData(form);
   const payload = {
     name: text(data, "name"),
@@ -159,6 +166,7 @@ async function onManualCreate(event) {
 
   setBusy(form, true);
   setMessage("Cadastrando produto manual...");
+  setLocalMessage(form, "Cadastrando produto manual...", "warning");
   try {
     const result = await apiFetch("/api/admin/products/manual", {
       method: "POST",
@@ -167,9 +175,12 @@ async function onManualCreate(event) {
     form.reset();
     resetFormDefaults(form);
     await refreshAll();
-    setMessage(`Produto cadastrado e publicado: ${result.product?.name || payload.name}.`, "ok");
+    const message = `Produto cadastrado e publicado: ${result.product?.name || payload.name}.`;
+    setMessage(message, "ok");
+    setLocalMessage(form, message, "ok");
   } catch (error) {
     setMessage(error.message, "error");
+    setLocalMessage(form, error.message, "error");
   } finally {
     setBusy(form, false);
   }
@@ -178,6 +189,7 @@ async function onManualCreate(event) {
 async function onEditSave(event) {
   event.preventDefault();
   if (!state.editing) return;
+  clearLocalMessage(nodes.editForm);
 
   const data = new FormData(nodes.editForm);
   const oldPrice = numberOrNull(text(data, "oldPrice"));
@@ -197,6 +209,7 @@ async function onEditSave(event) {
 
   setBusy(nodes.editForm, true);
   setMessage(`Salvando ${state.editing.id}...`);
+  setLocalMessage(nodes.editForm, `Salvando ${state.editing.id}...`, "warning");
   try {
     await apiFetch(`/api/admin/products/${encodeURIComponent(state.editing.id)}/manual-data`, {
       method: "PATCH",
@@ -205,8 +218,10 @@ async function onEditSave(event) {
     closeEditor();
     await refreshAll();
     setMessage("Produto atualizado e publicado na loja.", "ok");
+    setLocalMessage(nodes.editForm, "Produto atualizado e publicado na loja.", "ok");
   } catch (error) {
     setMessage(error.message, "error");
+    setLocalMessage(nodes.editForm, error.message, "error");
   } finally {
     setBusy(nodes.editForm, false);
   }
@@ -259,7 +274,9 @@ function createManualFromMercadoLivreLink() {
   manualForm.elements.heroImage.placeholder = "Imagem real do produto";
   manualForm.scrollIntoView({ behavior: "smooth", block: "start" });
   manualForm.elements.name.focus();
-  setMessage("Preencha nome, preço e imagem real. Depois use a IA para gerar descrição e salve como produto manual limpo.", "ok");
+  const message = "Link preparado no cadastro manual. Preencha nome, preço e imagem real; depois use a IA no próprio formulário.";
+  setMessage(message, "ok");
+  setLocalMessage(manualForm, message, "ok");
 }
 
 function onFilter(event) {
@@ -308,30 +325,37 @@ async function deleteProduct(id) {
 
 async function debugMercadoLivre() {
   const input = nodes.importForm.elements.input?.value?.trim();
+  clearLocalMessage(nodes.importForm);
   if (!input) {
     setMessage("Informe um link ou MLB ID para depurar.", "error");
+    setLocalMessage(nodes.importForm, "Informe um link ou MLB ID para depurar.", "error");
     return;
   }
   setMessage("Executando debug Mercado Livre...");
+  setLocalMessage(nodes.importForm, "Executando debug Mercado Livre...", "warning");
   try {
     const result = await apiFetch(`/api/admin/debug-mercadolivre?input=${encodeURIComponent(input)}`);
     const debug = result.debug || {};
     const accepted = (debug.priceCandidates || []).filter((candidate) => candidate.accepted);
     const rejected = (debug.priceCandidates || []).filter((candidate) => !candidate.accepted);
     console.log("[SMShop Debug ML]", debug);
-    setMessage(
-      `Debug ML: ${debug.title || debug.meliId || input}. Preço escolhido: ${formatPrice(debug.chosenPrice)}. Candidatos válidos: ${accepted.length}. Rejeitados: ${rejected.length}. ${debug.reason || ""}`,
-      debug.chosenPrice ? "ok" : "error"
-    );
+    const message = `Debug ML: ${debug.title || debug.meliId || input}. Preço escolhido: ${formatPrice(debug.chosenPrice)}. Candidatos válidos: ${accepted.length}. Rejeitados: ${rejected.length}. ${debug.reason || ""}`;
+    const type = debug.chosenPrice ? "ok" : "warning";
+    setMessage(message, type);
+    setLocalMessage(nodes.importForm, message, type);
   } catch (error) {
     setMessage(error.message, "error");
+    setLocalMessage(nodes.importForm, error.message, "error");
   }
 }
 
 async function runAiAction(kind, button) {
   const context = getAiContext(button);
+  const localTarget = messageTargetForAiContext(context);
+  clearLocalMessage(localTarget);
   if (!context.product.name) {
     setMessage("Informe ou selecione um produto antes de usar a IA.", "error");
+    setLocalMessage(localTarget, "Informe ou selecione um produto antes de usar a IA.", "error");
     return;
   }
 
@@ -344,6 +368,7 @@ async function runAiAction(kind, button) {
 
   setButtonBusy(button, true);
   setMessage("Gerando com IA...");
+  setLocalMessage(localTarget, "Gerando com IA...", "warning");
   try {
     const response = await apiFetch(endpoint, {
       method: "POST",
@@ -354,9 +379,12 @@ async function runAiAction(kind, button) {
     renderAiResult(state.aiResult, context);
     applyImmediateAiResult(kind, context);
     markAiEnhanced(context);
-    setMessage(context.source === "edit" ? "IA concluiu dentro do modal. Revise os campos e salve quando quiser." : "IA concluiu. Revise o resultado antes de aplicar.", "ok");
+    const message = aiSuccessMessage(kind, context);
+    setMessage(message, "ok");
+    setLocalMessage(localTarget, message, "ok");
   } catch (error) {
     setMessage(error.message, "error");
+    setLocalMessage(localTarget, error.message, "error");
   } finally {
     setButtonBusy(button, false);
   }
@@ -424,9 +452,10 @@ function renderAiResult(aiResult, context = state.aiContext) {
 }
 
 function applyImmediateAiResult(kind, context) {
-  if (context?.source !== "edit") return;
-  if (kind === "generate-description") applyAiDescription({ preferModal: true, silent: true });
-  if (kind === "suggest-tags") applyAiTags({ preferModal: true, silent: true });
+  if (!["edit", "manual"].includes(context?.source)) return;
+  const preferModal = context.source === "edit";
+  if (kind === "generate-description") applyAiDescription({ preferModal, silent: true });
+  if (kind === "suggest-tags") applyAiTags({ preferModal, silent: true });
 }
 
 function applyAiDescription(options = {}) {
@@ -434,16 +463,22 @@ function applyAiDescription(options = {}) {
   const description = result.fullDescription || result.shortDescription || "";
   if (!description) {
     setMessage("A IA não retornou descrição aplicável.", "error");
+    setLocalMessage(getTargetFormForAiApply(), "A IA não retornou descrição aplicável.", "error");
     return;
   }
   const form = getTargetFormForAiApply();
   if (!form?.elements.description) {
     setMessage("Abra um produto ou use o cadastro manual para aplicar a descrição.", "error");
+    setLocalMessage(form, "Abra um produto ou use o cadastro manual para aplicar a descrição.", "error");
     return;
   }
   form.elements.description.value = description;
   markAiEnhanced({ form });
-  if (!options.silent) setMessage("Descrição aplicada no formulário. Revise e salve quando quiser.", "ok");
+  if (!options.silent) {
+    const message = "Descrição aplicada no formulário. Revise e salve quando quiser.";
+    setMessage(message, "ok");
+    setLocalMessage(form, message, "ok");
+  }
 }
 
 function applyAiTags(options = {}) {
@@ -455,16 +490,22 @@ function applyAiTags(options = {}) {
   ].filter(Boolean);
   if (!tags.length) {
     setMessage("A IA não retornou tags aplicáveis.", "error");
+    setLocalMessage(getTargetFormForAiApply(), "A IA não retornou tags aplicáveis.", "error");
     return;
   }
   const form = getTargetFormForAiApply();
   if (!form?.elements.tags) {
     setMessage("Abra um produto ou use o cadastro manual para aplicar tags.", "error");
+    setLocalMessage(form, "Abra um produto ou use o cadastro manual para aplicar tags.", "error");
     return;
   }
   form.elements.tags.value = [...new Set(tags)].join(", ");
   markAiEnhanced({ form });
-  if (!options.silent) setMessage("Tags aplicadas no formulário. Revise e salve quando quiser.", "ok");
+  if (!options.silent) {
+    const message = "Tags aplicadas no formulário. Revise e salve quando quiser.";
+    setMessage(message, "ok");
+    setLocalMessage(form, message, "ok");
+  }
 }
 
 function markAiEnhanced(context = {}) {
@@ -683,6 +724,7 @@ function renderAiProductSelect() {
 function openEditor(product) {
   if (!product) return;
   state.editing = product;
+  clearLocalMessage(nodes.editForm);
   renderCategoryOptions(nodes.editForm.elements.category, getKnownCategoryNames(), product.category || defaultCategoryName);
   nodes.editForm.elements.id.value = product.id || "";
   nodes.editForm.elements.name.value = product.name || "";
@@ -705,6 +747,7 @@ function closeEditor() {
   if (nodes.editor.open) nodes.editor.close();
   state.editing = null;
   if (nodes.aiModalResult) nodes.aiModalResult.value = "";
+  clearLocalMessage(nodes.editForm);
 }
 
 function filteredProducts() {
@@ -767,6 +810,41 @@ function setBusy(form, busy) {
 function setMessage(message, type = "") {
   nodes.status.textContent = message || "";
   nodes.status.className = `message ${type}`.trim();
+}
+
+function setLocalMessage(target, message, type = "") {
+  const node = getLocalMessageNode(target);
+  if (!node) return;
+  node.textContent = message || "";
+  node.className = `local-message ${type}`.trim();
+}
+
+function clearLocalMessage(target) {
+  const node = getLocalMessageNode(target);
+  if (!node) return;
+  node.textContent = "";
+  node.className = "local-message";
+}
+
+function getLocalMessageNode(target) {
+  const root = target?.closest?.("[data-import-form], [data-manual-form], [data-edit-form], [data-ai-panel]") || target;
+  return root?.querySelector?.("[data-local-message]") || null;
+}
+
+function messageTargetForAiContext(context) {
+  if (context?.source === "manual") return nodes.manualForm;
+  if (context?.source === "edit") return nodes.editForm;
+  return document.querySelector("[data-ai-panel]");
+}
+
+function aiSuccessMessage(kind, context) {
+  if (context?.source === "manual" && kind === "generate-description") return "Descrição gerada e preenchida no cadastro manual.";
+  if (context?.source === "manual" && kind === "suggest-tags") return "Tags geradas e preenchidas no cadastro manual.";
+  if (context?.source === "edit" && kind === "generate-description") return "Descrição gerada e preenchida no modal de edição.";
+  if (context?.source === "edit" && kind === "suggest-tags") return "Tags geradas e preenchidas no modal de edição.";
+  if (kind === "generate-sales-copy") return "Texto de venda gerado. Revise o resultado da IA.";
+  if (kind === "review-product") return "Revisão gerada. Confira as sugestões da IA.";
+  return "IA concluiu. Revise o resultado antes de publicar.";
 }
 
 function findProduct(id) {
