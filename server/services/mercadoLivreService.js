@@ -97,21 +97,54 @@ export async function fetchMercadoLivreDataByInput(input, options = {}) {
 export async function debugMercadoLivreImport(input) {
   const normalizedInput = await normalizeMercadoLivreInput(input);
   const debug = createDebugTrace(input, normalizedInput);
-  const data = normalizedInput.meliId ? await fetchHybridMercadoLivreData(normalizedInput, { debug }) : null;
+  let data = normalizedInput.meliId ? await fetchHybridMercadoLivreData(normalizedInput, { debug }) : null;
+  if (!data && normalizedInput.resolvedUrl) {
+    data = await fetchHtmlFallback(normalizedInput.resolvedUrl, normalizedInput, debug);
+  }
+  const apiAttempts = debug.attempts.filter((attempt) => attempt.layer === "api");
+  const htmlAttempts = debug.attempts.filter((attempt) => attempt.layer === "html" || attempt.layer === "redirect");
+  const chosenData = data ? {
+    meliId: data.meliId || null,
+    type: data.type || null,
+    name: data.title || null,
+    title: data.title || null,
+    description: data.description || null,
+    heroImage: data.heroImage || data.images?.[0] || null,
+    images: data.images || [],
+    price: data.price ?? null,
+    permalink: data.permalink || null,
+    mercadoLivrePermalink: data.permalink || null,
+    itemId: data.itemId || null,
+    catalogProductId: data.catalogProductId || null,
+    syncMethod: data.syncMethod || null,
+    syncStatus: data.syncStatus || null
+  } : null;
   return {
     inputOriginal: String(input || ""),
+    originalInput: String(input || ""),
     resolvedUrl: normalizedInput.resolvedUrl,
-    detectedType: normalizedInput.meliType,
+    detectedType: normalizedInput.detectedType || normalizedInput.meliType || "unknown",
     itemId: normalizedInput.itemId,
+    catalogProductId: normalizedInput.productId,
     productId: normalizedInput.productId,
     meliId: normalizedInput.meliId,
+    candidateIds: normalizedInput.candidateIds || [],
+    slug: normalizedInput.slug || null,
+    apiAttempts,
+    htmlAttempt: htmlAttempts[0] || null,
+    htmlAttempts,
     attempts: debug.attempts,
+    titleCandidates: debug.titleCandidates,
+    imageCandidates: debug.imageCandidates,
     title: data?.title || null,
     image: data?.heroImage || data?.images?.[0] || null,
     priceCandidates: debug.priceCandidates,
     chosenPrice: data?.price ?? null,
     chosenPriceSource: debug.chosenPriceSource || data?.syncMethod || null,
     reason: data?.price ? "Preço escolhido por fonte válida." : "Nenhum preço válido entre R$ 1 e R$ 50.000 foi encontrado.",
+    chosenData,
+    warnings: [...(normalizedInput.warnings || []), !normalizedInput.meliId ? "ID Mercado Livre não encontrado na entrada/resolução." : "", ...(data?.syncWarnings || [])].filter(Boolean),
+    errors: debug.attempts.filter((attempt) => !attempt.ok).map((attempt) => attempt.details).filter(Boolean),
     syncMethod: data?.syncMethod || null,
     syncWarnings: data?.syncWarnings || []
   };
@@ -149,50 +182,47 @@ export async function resolveMercadoLivreIdFromInput(value) {
 export async function normalizeMercadoLivreInput(value) {
   const sourceInput = String(value || "").trim();
   const normalized = {
+    originalInput: sourceInput,
     sourceInput,
     resolvedUrl: null,
     itemId: null,
     productId: null,
+    catalogProductId: null,
     meliId: null,
     meliType: null,
-    isCatalog: false
+    detectedType: "unknown",
+    isCatalog: false,
+    candidateIds: [],
+    slug: null,
+    warnings: []
   };
 
-  const direct = extractIdsFromText(sourceInput);
-  Object.assign(normalized, direct);
-  if (normalized.meliId) return normalized;
+  const direct = extractIdsFromInput(sourceInput);
+  applyExtractedIds(normalized, direct);
 
-  if (!/^https?:\/\/(?:www\.)?meli\.la\//i.test(sourceInput)) return normalized;
-
-  let currentUrl = sourceInput;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-    try {
-      const response = await fetch(currentUrl, {
-        method: "HEAD",
-        redirect: "manual",
-        signal: controller.signal
-      });
-      const location = response.headers.get("location");
-      if (!location) {
-        const resolvedByBody = await resolveShortUrlFromHtml(currentUrl);
-        if (resolvedByBody.resolvedUrl) normalized.resolvedUrl = resolvedByBody.resolvedUrl;
-        Object.assign(normalized, resolvedByBody.ids);
-        break;
-      }
-      currentUrl = new URL(location, currentUrl).toString();
-      normalized.resolvedUrl = currentUrl;
-      Object.assign(normalized, extractIdsFromText(currentUrl));
-      if (normalized.meliId) return normalized;
-    } catch (error) {
-      console.log(`[ML SYNC] Não foi possível resolver URL curta Mercado Livre: ${error.message}`);
-      break;
-    } finally {
-      clearTimeout(timeout);
+  const mustResolveRedirect = /^https?:\/\//i.test(sourceInput) && shouldResolveMercadoLivreRedirect(sourceInput) && (!normalized.meliId || /^https?:\/\/(?:www\.)?meli\.la\//i.test(sourceInput));
+  if (mustResolveRedirect) {
+    const resolved = await resolveMercadoLivreRedirectUrl(sourceInput);
+    if (resolved.resolvedUrl) {
+      normalized.resolvedUrl = extractRedirectTargetFromUrl(resolved.resolvedUrl) || resolved.resolvedUrl;
+      normalized.warnings.push(...resolved.warnings);
+      console.log(`[ML SYNC] URL Mercado Livre resolvida: ${sourceInput} -> ${normalized.resolvedUrl}`);
+      applyExtractedIds(normalized, extractIdsFromInput(normalized.resolvedUrl));
+    } else if (resolved.warnings.length) {
+      normalized.warnings.push(...resolved.warnings);
     }
   }
 
+  if (!normalized.meliId && /^https?:\/\/(?:www\.)?meli\.la\//i.test(sourceInput)) {
+    const resolvedByBody = await resolveShortUrlFromHtml(normalized.resolvedUrl || sourceInput);
+    if (resolvedByBody.resolvedUrl) {
+      normalized.resolvedUrl = resolvedByBody.resolvedUrl;
+      applyExtractedIds(normalized, extractIdsFromInput(resolvedByBody.resolvedUrl));
+    }
+    if (!normalized.meliId) applyExtractedIds(normalized, resolvedByBody.ids);
+  }
+
+  finalizeNormalizedInput(normalized);
   return normalized;
 }
 
@@ -210,9 +240,10 @@ async function resolveShortUrlFromHtml(url) {
     const html = await response.text().catch(() => "");
     const resolvedUrl = response.url && response.url !== url ? response.url : null;
     const candidateUrl = resolvedUrl || getMetaRefreshUrl(html, url) || getCanonicalUrl(html);
+    const idsFromUrl = candidateUrl ? extractIdsFromInput(candidateUrl) : extractIdsFromText("");
     return {
       resolvedUrl: candidateUrl,
-      ids: extractIdsFromText(`${candidateUrl || ""} ${html}`)
+      ids: idsFromUrl.meliId ? idsFromUrl : extractIdsFromHtmlText(html)
     };
   } catch (error) {
     console.log(`[ML SYNC] Não foi possível ler HTML da URL curta Mercado Livre: ${error.message}`);
@@ -245,7 +276,10 @@ function extractIdsFromText(value) {
     productId: null,
     meliId: null,
     meliType: null,
-    isCatalog: false
+    detectedType: "unknown",
+    isCatalog: false,
+    candidateIds: [],
+    slug: null
   };
 
   const itemQueryMatch = text.match(/[?&](?:wid|item_id)=(ML[A-Z]{1,2}-?\d{6,})\b/i);
@@ -262,10 +296,179 @@ function extractIdsFromText(value) {
     else result.productId = id;
   }
 
+  result.candidateIds = [...new Set([result.itemId, result.productId, ...[...text.matchAll(/\b(ML[A-Z]{1,2})-?(\d{6,})\b/gi)].map((match) => normalizeMeliId(`${match[1]}${match[2]}`))].filter(Boolean))];
   result.isCatalog = Boolean(result.productId);
   result.meliType = result.itemId ? "item" : result.productId ? "catalog_product" : null;
+  result.detectedType = result.meliType || "unknown";
   result.meliId = result.itemId || result.productId || null;
   return result;
+}
+
+function extractIdsFromInput(value) {
+  const text = String(value || "").trim();
+  const urlIds = extractIdsFromUrl(text);
+  if (urlIds.meliId) return urlIds;
+  return extractIdsFromText(text);
+}
+
+function extractIdsFromHtmlText(html) {
+  const text = String(html || "");
+  const catalogMatches = [
+    ...text.matchAll(/["']catalog_product_id["']\s*:\s*["'](MLB-?\d{6,})["']/gi),
+    ...text.matchAll(/\/p\/(MLB-?\d{6,})\b/gi)
+  ].map((match) => normalizeMeliId(match[1]));
+  const itemMatches = [
+    ...text.matchAll(/["']item_id["']\s*:\s*["'](MLB-?\d{10,})["']/gi),
+    ...text.matchAll(/https?:\\?\/\\?\/produto\.mercadolivre\.com\.br\\?\/(MLB)-?(\d{10,})/gi),
+    ...text.matchAll(/\b(MLB)-(\d{10,})\b/gi)
+  ].map((match) => normalizeMeliId(match[2] ? `${match[1]}${match[2]}` : match[1]));
+  const itemId = itemMatches[0] || null;
+  const productId = catalogMatches[0] || null;
+  const result = {
+    itemId,
+    productId,
+    catalogProductId: productId,
+    meliId: itemId || productId || null,
+    meliType: itemId ? "item" : productId ? "catalog_product" : null,
+    detectedType: itemId ? "item" : productId ? "catalog_product" : "unknown",
+    isCatalog: Boolean(productId),
+    candidateIds: [...new Set([itemId, productId, ...catalogMatches, ...itemMatches].filter(Boolean))],
+    slug: null
+  };
+  return result;
+}
+
+function extractIdsFromUrl(value) {
+  const result = {
+    itemId: null,
+    productId: null,
+    meliId: null,
+    meliType: null,
+    detectedType: "unknown",
+    isCatalog: false,
+    candidateIds: [],
+    slug: null
+  };
+
+  let url;
+  try {
+    url = new URL(String(value || ""));
+  } catch {
+    return result;
+  }
+
+  const path = decodeURIComponent(url.pathname || "");
+  const queryIds = [];
+  ["wid", "item_id"].forEach((key) => {
+    const queryId = url.searchParams.get(key);
+    if (queryId) queryIds.push(normalizeMeliId(queryId));
+  });
+  const catalogPathMatch = path.match(/\/p\/(ML[A-Z]{1,2}-?\d{6,})\b/i);
+  const itemPathMatch = path.match(/(?:^|\/)(ML[A-Z]{1,2})-?(\d{6,})\b/i);
+  const pathCandidates = [...path.matchAll(/\b(ML[A-Z]{1,2})-?(\d{6,})\b/gi)].map((match) => normalizeMeliId(`${match[1]}${match[2]}`));
+
+  result.candidateIds = [...new Set([...queryIds, catalogPathMatch ? normalizeMeliId(catalogPathMatch[1]) : null, itemPathMatch ? normalizeMeliId(`${itemPathMatch[1]}${itemPathMatch[2]}`) : null, ...pathCandidates].filter(Boolean))];
+  result.slug = path.split("/").filter(Boolean).find((part) => !/^p$/i.test(part) && !/^ML[A-Z]{1,2}-?\d+/i.test(part)) || null;
+
+  if (queryIds[0]) result.itemId = queryIds[0];
+  if (catalogPathMatch) result.productId = normalizeMeliId(catalogPathMatch[1]);
+  if (!result.itemId && itemPathMatch && !catalogPathMatch) result.itemId = normalizeMeliId(`${itemPathMatch[1]}${itemPathMatch[2]}`);
+
+  result.isCatalog = Boolean(result.productId);
+  result.meliType = result.itemId ? "item" : result.productId ? "catalog_product" : null;
+  result.detectedType = result.meliType || "unknown";
+  result.meliId = result.itemId || result.productId || null;
+  return result;
+}
+
+function applyExtractedIds(target, ids) {
+  if (!ids) return;
+  target.candidateIds = [...new Set([...(target.candidateIds || []), ...(ids.candidateIds || []), ids.itemId, ids.productId, ids.meliId].filter(Boolean))];
+  if (!target.itemId && ids.itemId) target.itemId = ids.itemId;
+  if (!target.productId && ids.productId) target.productId = ids.productId;
+  if (!target.catalogProductId && ids.productId) target.catalogProductId = ids.productId;
+  if (!target.slug && ids.slug) target.slug = ids.slug;
+  finalizeNormalizedInput(target);
+}
+
+function finalizeNormalizedInput(target) {
+  target.isCatalog = Boolean(target.productId);
+  target.meliType = target.itemId ? "item" : target.productId ? "catalog_product" : null;
+  target.detectedType = target.meliType || target.detectedType || "unknown";
+  target.meliId = target.itemId || target.productId || target.meliId || null;
+  target.catalogProductId = target.productId || null;
+}
+
+function shouldResolveMercadoLivreRedirect(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+    return host === "meli.la" || host.endsWith("mercadolivre.com.br") || host.endsWith("mercadolivre.com");
+  } catch {
+    return false;
+  }
+}
+
+function extractRedirectTargetFromUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    const go = url.searchParams.get("go") || url.searchParams.get("url") || url.searchParams.get("u");
+    if (!go) return null;
+    const decoded = decodeURIComponent(go);
+    return /^https?:\/\//i.test(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveMercadoLivreRedirectUrl(url) {
+  const warnings = [];
+  let currentUrl = url;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const result = await fetchRedirectStep(currentUrl, attempt === 0 ? "HEAD" : "GET");
+    warnings.push(...result.warnings);
+    if (result.resolvedUrl && result.resolvedUrl !== currentUrl) {
+      currentUrl = result.resolvedUrl;
+      if (!result.redirected) return { resolvedUrl: currentUrl, warnings };
+      continue;
+    }
+    return { resolvedUrl: currentUrl !== url ? currentUrl : null, warnings };
+  }
+  warnings.push("Limite de redirects Mercado Livre atingido.");
+  return { resolvedUrl: currentUrl !== url ? currentUrl : null, warnings };
+}
+
+async function fetchRedirectStep(url, method) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  try {
+    const response = await fetch(url, {
+      method,
+      redirect: "manual",
+      headers: { "User-Agent": "Mozilla/5.0 SMShopImporter/1.0" },
+      signal: controller.signal
+    });
+    const location = response.headers.get("location");
+    if (location) {
+      return {
+        redirected: true,
+        resolvedUrl: new URL(location, url).toString(),
+        warnings: []
+      };
+    }
+    if (method === "HEAD" && response.status >= 400) {
+      return fetchRedirectStep(url, "GET");
+    }
+    return {
+      redirected: false,
+      resolvedUrl: response.url && response.url !== url ? response.url : null,
+      warnings: response.ok ? [] : [`Redirect ${method} ${url}: HTTP ${response.status}`]
+    };
+  } catch (error) {
+    console.log(`[ML SYNC] Não foi possível resolver redirect Mercado Livre: ${error.message}`);
+    return { redirected: false, resolvedUrl: null, warnings: [`Redirect ${method} falhou: ${error.message}`] };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function normalizeMeliId(value) {
@@ -326,6 +529,7 @@ async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
         "API OK",
         normalizedInput
       );
+      recordDataCandidates(debug, apiData, `/items/${itemId}`);
       candidates.push(apiData.permalink);
       if (itemResult.data?.catalog_product_id) normalizedInput.productId = itemResult.data.catalog_product_id;
     } else {
@@ -340,6 +544,7 @@ async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
     if (productResult.ok) {
       const resolvedPrice = await resolveMercadoLivrePrice(productId, productResult.data, headers, debug);
       const catalogData = withMethod(normalizeMeliCatalogProduct(productId, productResult.data, resolvedPrice), "API OK", normalizedInput);
+      recordDataCandidates(debug, catalogData, `/products/${productId}`);
       apiData = mergeMercadoLivrePayload(apiData, catalogData);
       candidates.push(apiData.permalink, resolvedPrice?.permalink);
     } else {
@@ -352,6 +557,7 @@ async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
   if (needsMoreData(mergedData)) {
     const htmlData = await fetchBestHtmlFallback(candidates, normalizedInput, debug);
     if (htmlData) {
+      recordDataCandidates(debug, htmlData, "HTML fallback");
       mergedData = mergeMercadoLivrePayload(mergedData, htmlData);
     }
   }
@@ -359,6 +565,7 @@ async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
   if (needsMoreData(mergedData)) {
     const searchData = await fetchSearchFallback(mergedData?.title || normalizedInput.meliId || normalizedInput.sourceInput, headers, normalizedInput, debug);
     if (searchData) {
+      recordDataCandidates(debug, searchData, "Search fallback");
       mergedData = mergeMercadoLivrePayload(mergedData, searchData);
     }
   }
@@ -366,6 +573,7 @@ async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
   if (needsMoreData(mergedData)) {
     const titleSearchData = await fetchAggressiveTitleSearchFallback(mergedData?.title || "", headers, normalizedInput, debug);
     if (titleSearchData) {
+      recordDataCandidates(debug, titleSearchData, "Title search fallback");
       mergedData = mergeMercadoLivrePayload(mergedData, titleSearchData);
     }
   }
@@ -373,6 +581,7 @@ async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
   if (needsMoreData(mergedData)) {
     const publicSearchData = await fetchPublicSearchHtmlFallback(mergedData?.title || "", normalizedInput, debug);
     if (publicSearchData) {
+      recordDataCandidates(debug, publicSearchData, "Public search HTML fallback");
       mergedData = mergeMercadoLivrePayload(mergedData, publicSearchData);
     }
   }
@@ -523,7 +732,7 @@ function withMethod(data, syncMethod, inputInfo) {
 function needsMoreData(data) {
   if (!data) return true;
   const hasTitle = Boolean(meaningfulText(data.title));
-  const hasImage = Boolean(data.heroImage || data.images?.length);
+  const hasImage = Boolean(isUsefulMercadoLivreImage(data.heroImage) || normalizeHtmlImages(data.images).some(isUsefulMercadoLivreImage));
   const hasPrice = Number.isFinite(Number(data.price)) && Number(data.price) > 0;
   return !hasTitle || !hasImage || !hasPrice;
 }
@@ -577,6 +786,8 @@ function createDebugTrace(input, normalizedInput) {
     input: String(input || ""),
     normalizedInput,
     attempts: [],
+    titleCandidates: [],
+    imageCandidates: [],
     priceCandidates: [],
     chosenPriceSource: null
   };
@@ -599,6 +810,36 @@ function recordPriceCandidate(debug, candidate) {
     parsed: price,
     accepted: price !== null,
     reason: price === null ? candidate.reason || "fora do intervalo válido ou não numérico" : "válido"
+  });
+}
+
+function recordTitleCandidate(debug, candidate) {
+  if (!debug) return;
+  const value = meaningfulText(candidate.value);
+  debug.titleCandidates.push({
+    source: candidate.source,
+    value: candidate.value || null,
+    accepted: Boolean(value),
+    reason: value ? "válido" : "título vazio, genérico ou só MLB"
+  });
+}
+
+function recordImageCandidate(debug, candidate) {
+  if (!debug) return;
+  const value = String(candidate.value || "").trim();
+  debug.imageCandidates.push({
+    source: candidate.source,
+    value: value || null,
+    accepted: isUsefulMercadoLivreImage(value),
+    reason: isUsefulMercadoLivreImage(value) ? "válida" : "imagem vazia, logo ou placeholder"
+  });
+}
+
+function recordDataCandidates(debug, data, source) {
+  if (!debug || !data) return;
+  recordTitleCandidate(debug, { source, value: data.title });
+  [data.heroImage, ...(data.images || [])].filter(Boolean).forEach((image, index) => {
+    recordImageCandidate(debug, { source: `${source} image ${index + 1}`, value: image });
   });
 }
 
@@ -674,6 +915,14 @@ function parseMercadoLivreHtml(html, debug = null) {
   const metaItempropPrice = getMetaContent(html, "itemprop", "price");
   const twitterPrice = getMetaContent(html, "name", "twitter:data1");
   const visiblePrices = extractVisibleHtmlPrices(html);
+  const rawTitleCandidates = [
+    ["og:title", getMetaContent(html, "property", "og:title")],
+    ["twitter:title", getMetaContent(html, "name", "twitter:title")],
+    ["json-ld name", jsonLd.title],
+    ["scripts title/name", scriptData.title],
+    ["title tag", getTagContent(html, "title")]
+  ];
+  rawTitleCandidates.forEach(([source, value]) => recordTitleCandidate(debug, { source, value: cleanTitle(value) }));
   [
     ["json-ld offers.price", jsonLd.price],
     ["meta product:price:amount", metaProductPrice],
@@ -705,19 +954,25 @@ function parseMercadoLivreHtml(html, debug = null) {
     ...visiblePrices
   ]);
   const images = [
-    getMetaContent(html, "property", "og:image"),
-    getMetaContent(html, "name", "twitter:image"),
-    ...normalizeHtmlImages(jsonLd.images),
-    ...normalizeHtmlImages(scriptData.images)
-  ].filter(isUsefulMercadoLivreImage);
+    ["og:image", getMetaContent(html, "property", "og:image")],
+    ["twitter:image", getMetaContent(html, "name", "twitter:image")],
+    ...normalizeHtmlImages(jsonLd.images).map((image) => ["json-ld image", image]),
+    ...normalizeHtmlImages(scriptData.images).map((image) => ["script image", image])
+  ].filter(([, image]) => isUsefulMercadoLivreImage(image));
+  [
+    ["og:image", getMetaContent(html, "property", "og:image")],
+    ["twitter:image", getMetaContent(html, "name", "twitter:image")],
+    ...normalizeHtmlImages(jsonLd.images).map((image) => ["json-ld image", image]),
+    ...normalizeHtmlImages(scriptData.images).map((image) => ["script image", image])
+  ].forEach(([source, value]) => recordImageCandidate(debug, { source, value }));
 
   return {
     title,
     description,
     price,
     currency: getMetaContent(html, "property", "product:price:currency") || jsonLd.currency || scriptData.currency || "BRL",
-    heroImage: images[0] || null,
-    images: [...new Set(images)]
+    heroImage: images[0]?.[1] || null,
+    images: [...new Set(images.map((image) => image[1]))]
   };
 }
 
@@ -1126,7 +1381,9 @@ function buildManualReviewFallback(inputInfo, warnings, errorMessage) {
 
 function finalizeHybridData(data, inputInfo, warnings) {
   const hasTitle = Boolean(meaningfulText(data.title));
-  const hasImage = Boolean(data.heroImage || data.images?.length);
+  const images = normalizeHtmlImages(data.images).filter(isUsefulMercadoLivreImage);
+  const heroImage = isUsefulMercadoLivreImage(data.heroImage) ? data.heroImage : images[0] || null;
+  const hasImage = Boolean(heroImage || images.length);
   const hasPrice = Number.isFinite(Number(data.price)) && Number(data.price) > 0;
   const syncWarnings = [...new Set([
     ...warnings,
@@ -1140,13 +1397,14 @@ function finalizeHybridData(data, inputInfo, warnings) {
     meliId: inputInfo.meliId || data.meliId,
     type: data.type || inputInfo.meliType || null,
     title: hasTitle ? data.title : `Produto Mercado Livre ${inputInfo.meliId || data.meliId} — revisar título`,
-    heroImage: data.heroImage || data.images?.[0] || null,
+    heroImage,
+    images: images.length ? images : heroImage ? [heroImage] : [],
     sourceInput: inputInfo.sourceInput || data.sourceInput || null,
     resolvedUrl: data.resolvedUrl || inputInfo.resolvedUrl || null,
     itemId: data.itemId || inputInfo.itemId || null,
     catalogProductId: data.catalogProductId || inputInfo.productId || null,
     fetchedAt: data.fetchedAt || new Date().toISOString(),
-    syncStatus: hasTitle && hasImage && hasPrice ? "synced" : "partial",
+    syncStatus: hasTitle && hasImage ? "synced" : "partial",
     syncMethod: data.syncMethod || "API parcial",
     syncWarnings,
     syncWarning: syncWarnings[0] || null

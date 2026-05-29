@@ -538,6 +538,10 @@ function renderAnalytics() {
 function importResultMessage(product) {
   const name = product?.name || product?.id || "novo produto";
   const warnings = productWarnings(product);
+  const genericFallback = /Produto Mercado Livre .*revisar título|^Mercado Livre$/i.test(name) || /logo\/logo\.png/i.test(product?.heroImage || "");
+  if (genericFallback) {
+    return `Dados do ML não encontrados — clique em Debug ML. ${warnings.slice(0, 2).join(" ")}`;
+  }
   return warnings.length
     ? `Produto importado e publicado: ${name}. ${warnings.slice(0, 3).join(" ")}`
     : `Produto importado e publicado: ${name}.`;

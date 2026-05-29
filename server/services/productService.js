@@ -755,7 +755,7 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
   const hasMercadoLivrePrice = Number.isFinite(Number(mercadoLivreData?.price)) && Number(mercadoLivreData?.price) > 0;
   const hasManualPrice = Number.isFinite(Number(manualPrice)) && Number(manualPrice) > 0;
   const hasImage = Boolean(usefulImage(mercadoLivreData?.heroImage) || mercadoLivreImages.length || usefulImage(existingProduct?.heroImage) || existingImages.length);
-  const syncStatus = (hasMercadoLivrePrice || hasManualPrice) && hasImage && !/revisar título/i.test(title) ? "synced" : "partial";
+  const syncStatus = hasImage && !/revisar título/i.test(title) ? "synced" : "partial";
   const syncWarnings = buildImportWarnings({ mercadoLivreData, mercadoLivreError, hasMercadoLivrePrice, hasManualPrice, hasImage, title });
 
   return {
@@ -796,7 +796,7 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
     importedFromMercadoLivre: true,
     importedAt: new Date().toISOString(),
     syncedAt: mercadoLivreData?.fetchedAt || new Date().toISOString(),
-    dataSource: syncStatus === "synced" && hasMercadoLivrePrice ? buildMercadoLivreDataSource(mercadoLivreData?.type, syncStatus) : "mercadolivre-partial",
+    dataSource: syncStatus === "synced" ? buildMercadoLivreDataSource(mercadoLivreData?.type, syncStatus) : "mercadolivre-partial",
     syncStatus,
     syncMethod: mercadoLivreData?.syncMethod || (syncStatus === "synced" ? "API OK" : "Manual/revisar"),
     syncWarnings,
