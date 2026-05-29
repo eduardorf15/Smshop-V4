@@ -132,6 +132,14 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
     parsedFields: trace.parsedFields,
     fallbackTriggers: importedProduct.dataQuality?.fallbackTriggers || []
   };
+  const fallbackTriggers = importedProduct.dataQuality?.fallbackTriggers || [];
+  if (fallbackTriggers.includes("title") || fallbackTriggers.includes("image")) {
+    const message = mercadoLivreData?.officialAccessDenied
+      ? "Mercado Livre bloqueou dados automáticos deste produto. Use cadastro manual/IA."
+      : "Não foi possível obter título e imagem reais do Mercado Livre. Use cadastro manual/IA para evitar publicar produto genérico.";
+    console.log("[ML IMPORT BLOCKED]", JSON.stringify({ input, meliId, message, fallbackTriggers, officialAccessDenied: Boolean(mercadoLivreData?.officialAccessDenied) }));
+    throw createPublicError(message, 422);
+  }
   console.log("[ML PIPELINE INPUT]", JSON.stringify({ input, itemId: normalizedInput.itemId, catalogId: normalizedInput.catalogId, resolvedUrl: normalizedInput.resolvedUrl }));
   console.log("[ML PIPELINE FOUND]", JSON.stringify(trace.parsedFields));
   console.log("[ML FINAL PAYLOAD]", JSON.stringify(summarizeProductForLog(importedProduct)));

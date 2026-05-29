@@ -36,6 +36,10 @@ export async function fetchMercadoLivreData(input, options = {}) {
   }
 
   const finalPayload = finalizePayload(merged, normalizedInput);
+  finalPayload.officialAccessDenied = officialAccessDenied(trace);
+  if (finalPayload.officialAccessDenied && (!finalPayload.title || !finalPayload.images.length)) {
+    finalPayload.blockedReason = "Mercado Livre negou acesso oficial a este recurso.";
+  }
   trace.parsedFields = summarizePayload(finalPayload);
   return options.withTrace ? { data: finalPayload, trace } : finalPayload;
 }
@@ -140,10 +144,16 @@ function createTrace(normalizedInput) {
 }
 
 async function fetchApiItem(itemId, auth, trace) {
-  const item = await fetchMeliResource(`items/${encodeURIComponent(itemId)}`, auth, trace);
-  if (!item.ok) return null;
-  const description = await fetchMeliResource(`items/${encodeURIComponent(itemId)}/description`, auth, trace);
-  const payload = fromApiItem(item.data, description.ok ? description.data : null);
+  const encodedId = encodeURIComponent(itemId);
+  const [item, itemWithAttributes, description, pictures] = await Promise.all([
+    fetchMeliResource(`items/${encodedId}`, auth, trace),
+    fetchMeliResource(`items/${encodedId}?include_attributes=all`, auth, trace),
+    fetchMeliResource(`items/${encodedId}/description`, auth, trace),
+    fetchMeliResource(`items/${encodedId}/pictures`, auth, trace)
+  ]);
+  const itemData = item.ok ? item.data : itemWithAttributes.ok ? itemWithAttributes.data : null;
+  if (!itemData && !description.ok && !pictures.ok) return null;
+  const payload = fromApiItem(itemData || { id: itemId }, description.ok ? description.data : null, pictures.ok ? pictures.data : null);
   recordPayloadCandidates(trace, payload, `api/items/${itemId}`);
   return payload;
 }
@@ -184,9 +194,12 @@ async function fetchBestHtml(normalizedInput, current, trace) {
 async function fetchSearchFallback(normalizedInput, current, auth, trace) {
   const query = buildSearchQuery(normalizedInput, current);
   if (!query) return null;
-  const response = await fetchMeliResource(`sites/MLB/search?q=${encodeURIComponent(query)}`, auth, trace);
-  if (!response.ok) return null;
-  const offers = extractOffers(response.data).map(fromOffer).filter(Boolean);
+  const endpoints = [
+    `sites/MLB/search?q=${encodeURIComponent(query)}`,
+    `sites/MLB/search?nickname=${encodeURIComponent(current?.seller?.nickname || query)}`
+  ];
+  const responses = await Promise.all(endpoints.map((endpoint) => fetchMeliResource(endpoint, auth, trace)));
+  const offers = responses.flatMap((response) => response.ok ? extractOffers(response.data).map(fromOffer).filter(Boolean) : []);
   const best = offers
     .map((offer) => ({ offer, score: similarity(query, offer.title) + (offer.price ? 0.2 : 0) + (offer.images.length ? 0.1 : 0) }))
     .sort((a, b) => b.score - a.score)[0]?.offer || null;
@@ -194,9 +207,9 @@ async function fetchSearchFallback(normalizedInput, current, auth, trace) {
   return best ? { ...best, source: "search", confidence: confidence(best) } : null;
 }
 
-async function fetchMeliResource(pathname, auth, trace) {
+async function fetchMeliResource(pathname, auth, trace, options = {}) {
   const url = `https://api.mercadolibre.com/${pathname}`;
-  if (!auth.headers.Authorization) {
+  if (!auth.headers.Authorization && !options.diagnostic) {
     recordAttempt(trace, {
       layer: "api",
       method: "GET",
@@ -204,6 +217,7 @@ async function fetchMeliResource(pathname, auth, trace) {
       status: 0,
       ok: false,
       authMode: "fallback",
+      authorizationSent: false,
       details: "API oficial ignorada: Mercado Livre OAuth não conectado"
     });
     return { ok: false, status: 0, details: "OAuth Mercado Livre não conectado" };
@@ -215,20 +229,101 @@ async function fetchMeliResource(pathname, auth, trace) {
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const response = await fetch(url, { headers: auth.headers, signal: controller.signal });
-      const data = await response.json().catch(() => ({}));
-      recordAttempt(trace, { layer: "api", method: "GET", url, status: response.status, ok: response.ok, authMode: auth.debug.authMode, details: response.ok ? "ok" : summarizeApiError(data, response.status) });
+      const { data, responseBody } = await readApiResponseBody(response);
+      const attempt = {
+        layer: options.diagnostic ? "api-diagnostic" : "api",
+        method: "GET",
+        url: sanitizeApiUrl(url),
+        status: response.status,
+        ok: response.ok,
+        authMode: options.authMode || auth.debug.authMode,
+        diagnosticMode: options.diagnosticMode || null,
+        authorizationSent: Boolean(auth.headers.Authorization),
+        authorizationScheme: auth.headers.Authorization ? "Bearer" : null,
+        details: response.ok ? "ok" : summarizeApiError(data, response.status),
+        responseBody
+      };
+      recordAttempt(trace, attempt);
       if (response.ok) return { ok: true, data };
       lastError = summarizeApiError(data, response.status);
+      if (response.status === 403 && auth.accessToken && !options.diagnostic) {
+        await runApi403Diagnostics(pathname, auth, trace, attempt);
+      }
       if (![408, 429].includes(response.status) && response.status < 500) return { ok: false, status: response.status, details: lastError };
     } catch (error) {
       lastError = error.message;
-      recordAttempt(trace, { layer: "api", method: "GET", url, status: 0, ok: false, details: error.message });
+      recordAttempt(trace, {
+        layer: options.diagnostic ? "api-diagnostic" : "api",
+        method: "GET",
+        url: sanitizeApiUrl(url),
+        status: 0,
+        ok: false,
+        authMode: options.authMode || auth.debug.authMode,
+        diagnosticMode: options.diagnosticMode || null,
+        authorizationSent: Boolean(auth.headers.Authorization),
+        authorizationScheme: auth.headers.Authorization ? "Bearer" : null,
+        details: error.message
+      });
     } finally {
       clearTimeout(timeout);
     }
     await wait(200 * (attempt + 1));
   }
   return { ok: false, status: 0, details: lastError || "Falha de rede Mercado Livre" };
+}
+
+async function runApi403Diagnostics(pathname, auth, trace, authorizedAttempt) {
+  recordAttempt(trace, {
+    layer: "api-diagnostic",
+    method: "CHECK",
+    url: authorizedAttempt.url,
+    status: authorizedAttempt.status,
+    ok: false,
+    authMode: auth.debug.authMode,
+    diagnosticMode: "authorized-comparison",
+    authorizationSent: authorizedAttempt.authorizationSent,
+    authorizationScheme: authorizedAttempt.authorizationScheme,
+    details: authorizedAttempt.authorizationSent
+      ? "Authorization header enviado como Bearer; resposta oficial foi 403."
+      : "Authorization header nao enviado.",
+    responseBody: authorizedAttempt.responseBody
+  });
+
+  await fetchMeliResource(pathname, { ...auth, headers: { Accept: "application/json" } }, trace, {
+    diagnostic: true,
+    diagnosticMode: "without-authorization",
+    authMode: "anonymous"
+  });
+
+  const separator = pathname.includes("?") ? "&" : "?";
+  await fetchMeliResource(`${pathname}${separator}access_token=${encodeURIComponent(auth.accessToken)}`, {
+    ...auth,
+    headers: { Accept: "application/json" }
+  }, trace, {
+    diagnostic: true,
+    diagnosticMode: "query-access-token",
+    authMode: "oauth-query"
+  });
+}
+
+async function readApiResponseBody(response) {
+  const raw = await response.text().catch(() => "");
+  if (!raw) return { data: {}, responseBody: null };
+  try {
+    const data = JSON.parse(raw);
+    return { data, responseBody: data };
+  } catch {
+    return { data: {}, responseBody: raw };
+  }
+}
+
+function sanitizeApiUrl(url) {
+  return String(url || "").replace(/([?&]access_token=)[^&]+/i, "$1***");
+}
+
+function officialAccessDenied(trace) {
+  const apiAttempts = (trace?.attempts || []).filter((attempt) => attempt.layer === "api");
+  return apiAttempts.length > 0 && apiAttempts.every((attempt) => attempt.status === 403);
 }
 
 async function fetchHtml(url, trace) {
@@ -250,7 +345,11 @@ async function fetchHtml(url, trace) {
       const challenged = await fetchHtmlWithCookie(response.url || url, challenge, trace);
       if (challenged && !isEmptyMicroLanding(challenged.body)) return challenged;
     }
-    return response.ok && body ? { body, url: response.url || url } : null;
+    if (response.ok && body && !isAccountVerificationPage(body, response.url || url)) return { body, url: response.url || url };
+    if (response.ok && isAccountVerificationPage(body, response.url || url)) {
+      recordAttempt(trace, { layer: "html", method: "GET", url, finalUrl: response.url, status: response.status, ok: false, details: "HTML ignorado: pagina de verificacao de conta Mercado Livre" });
+    }
+    return null;
   } catch (error) {
     recordAttempt(trace, { layer: "html", method: "GET", url, status: 0, ok: false, details: error.message });
     return null;
@@ -262,6 +361,11 @@ async function fetchHtml(url, trace) {
 function isEmptyMicroLanding(body) {
   const text = String(body || "");
   return /micro-landing/i.test(text) && /data:image\/gif/i.test(text) && !/mlstatic\.com/i.test(text);
+}
+
+function isAccountVerificationPage(body, url = "") {
+  const text = String(body || "");
+  return /\/gz\/account-verification|account-verification/i.test(String(url || "")) || /gz\/account-verification/i.test(text);
 }
 
 async function fetchHtmlWithCookie(url, cookie, trace) {
@@ -279,7 +383,11 @@ async function fetchHtmlWithCookie(url, cookie, trace) {
     });
     const body = await response.text().catch(() => "");
     recordAttempt(trace, { layer: "html", method: "GET", url, finalUrl: response.url, status: response.status, ok: response.ok, details: response.ok ? `challenge ${body.length} bytes` : "challenge html indisponivel" });
-    return response.ok && body ? { body, url: response.url || url } : null;
+    if (response.ok && body && !isAccountVerificationPage(body, response.url || url)) return { body, url: response.url || url };
+    if (response.ok && isAccountVerificationPage(body, response.url || url)) {
+      recordAttempt(trace, { layer: "html", method: "GET", url, finalUrl: response.url, status: response.status, ok: false, details: "HTML challenge ignorado: pagina de verificacao de conta Mercado Livre" });
+    }
+    return null;
   } catch (error) {
     recordAttempt(trace, { layer: "html", method: "GET", url, status: 0, ok: false, details: `challenge ${error.message}` });
     return null;
@@ -330,9 +438,9 @@ function solveChallenge(seed, difficulty) {
   return 0;
 }
 
-function fromApiItem(item, descriptionData = null) {
+function fromApiItem(item, descriptionData = null, picturesData = null) {
   if (!item) return null;
-  const images = getPictures(item);
+  const images = [...new Set([...getPictures(item), ...normalizePicturesEndpoint(picturesData)])];
   return {
     title: cleanText(item.title),
     description: cleanText(descriptionData?.plain_text || descriptionData?.text || ""),
@@ -353,6 +461,13 @@ function fromApiItem(item, descriptionData = null) {
     soldQuantity: Number(item.sold_quantity || 0),
     fetchedAt: new Date().toISOString()
   };
+}
+
+function normalizePicturesEndpoint(data) {
+  if (!data) return [];
+  if (Array.isArray(data)) return normalizeImages(data);
+  if (Array.isArray(data.pictures)) return normalizeImages(data.pictures);
+  return normalizeImages(data);
 }
 
 function fromApiCatalog(product) {
@@ -812,6 +927,7 @@ async function buildAuthContext() {
     const refreshedDebug = await getAuthDebugStatus();
     return {
       headers,
+      accessToken,
       debug: {
         ...refreshedDebug,
         authMode: "oauth"

@@ -112,7 +112,7 @@ export async function debugMercadoLivreImport(input) {
     affiliateUrl: data.permalink || normalizedInput.resolvedUrl || String(input || ""),
     category: "Tecnologia"
   }) : null;
-  const apiAttempts = trace.attempts.filter((attempt) => attempt.layer === "api");
+  const apiAttempts = trace.attempts.filter((attempt) => String(attempt.layer || "").startsWith("api"));
   const htmlAttempts = trace.attempts.filter((attempt) => attempt.layer === "html" || attempt.layer === "redirect");
   const chosenData = data ? {
     meliId: normalizedInput.meliId || null,
@@ -159,10 +159,16 @@ export async function debugMercadoLivreImport(input) {
       status: attempt.status,
       ok: attempt.ok,
       authMode: attempt.authMode || trace.auth?.authMode || "fallback",
-      details: attempt.details
+      diagnosticMode: attempt.diagnosticMode || null,
+      authorizationSent: Boolean(attempt.authorizationSent),
+      authorizationScheme: attempt.authorizationScheme || null,
+      details: attempt.details,
+      responseBody: attempt.responseBody ?? null
     })),
     apiSuccess: apiAttempts.some((attempt) => attempt.ok),
     apiFailure: apiAttempts.some((attempt) => !attempt.ok),
+    officialAccessDenied: Boolean(data?.officialAccessDenied),
+    officialAccessDeniedMessage: data?.officialAccessDenied ? "Mercado Livre negou acesso oficial a este recurso." : null,
     htmlExtraction: trace.htmlExtraction,
     parsedFields: trace.parsedFields,
     titleCandidates: trace.titleCandidates,

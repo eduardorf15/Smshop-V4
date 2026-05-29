@@ -219,6 +219,7 @@ async function onActionClick(event) {
   if (action === "sync-all") await syncAll();
   if (action === "focus-import") nodes.importForm.querySelector("input[name='input']")?.focus();
   if (action === "debug-ml") await debugMercadoLivre();
+  if (action === "manual-from-link") createManualFromMercadoLivreLink();
   if (action === "ai-description") await runAiAction("generate-description", button);
   if (action === "ai-copy") await runAiAction("generate-sales-copy", button);
   if (action === "ai-tags") await runAiAction("suggest-tags", button);
@@ -228,6 +229,28 @@ async function onActionClick(event) {
   if (action === "edit") openEditor(findProduct(id));
   if (action === "sync") await syncProduct(id);
   if (action === "delete") await deleteProduct(id);
+}
+
+function createManualFromMercadoLivreLink() {
+  const importForm = nodes.importForm;
+  const manualForm = nodes.manualForm;
+  const input = importForm.elements.input?.value?.trim() || "";
+  const affiliateUrl = importForm.elements.affiliateUrl?.value?.trim() || input;
+  const category = importForm.elements.category?.value || defaultCategoryName;
+  const tags = importForm.elements.tags?.value?.trim();
+
+  manualForm.elements.affiliateUrl.value = affiliateUrl;
+  manualForm.elements.category.value = category;
+  manualForm.elements.tags.value = tags || "mercado livre, curadoria";
+  manualForm.elements.description.value = "";
+  manualForm.elements.heroImage.value = "";
+  manualForm.elements.images.value = "";
+  manualForm.elements.name.placeholder = "Nome real do produto";
+  manualForm.elements.price.placeholder = "Preço manual obrigatório";
+  manualForm.elements.heroImage.placeholder = "Imagem real do produto";
+  manualForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  manualForm.elements.name.focus();
+  setMessage("Preencha nome, preço e imagem real. Depois use a IA para gerar descrição e salve como produto manual limpo.", "ok");
 }
 
 function onFilter(event) {
