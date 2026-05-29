@@ -126,13 +126,24 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
     available,
     manualPrice
   });
+  console.log("[ML FINAL PAYLOAD]", JSON.stringify(summarizeProductForLog(importedProduct)));
   const nextImportedProducts = upsertImportedProduct(importedProducts, importedProduct);
 
   await writeImportedProducts(nextImportedProducts);
+  const savedProduct = nextImportedProducts.find((product) => product.id === importedProduct.id || (importedProduct.meliId && product.meliId === importedProduct.meliId)) || importedProduct;
+  console.log("[ML SAVED PRODUCT]", JSON.stringify(summarizeProductForLog(savedProduct)));
   cache = null;
   cacheFetchedAt = 0;
 
   const [syncedProduct] = await syncProductsWithMercadoLivre([toRuntimeProduct(importedProduct, existingProduct)], { force: true });
+  if (syncedProduct) {
+    await persistSyncedImportedProduct(importedProduct, syncedProduct);
+    const finalImportedProducts = await readImportedProducts();
+    const finalSavedProduct = finalImportedProducts.find((product) => product.id === importedProduct.id || (importedProduct.meliId && product.meliId === importedProduct.meliId)) || syncedProduct;
+    console.log("[ML SAVED PRODUCT]", JSON.stringify(summarizeProductForLog(finalSavedProduct)));
+    cache = null;
+    cacheFetchedAt = 0;
+  }
   return {
     imported: !existingProduct,
     updated: Boolean(existingProduct),
@@ -502,15 +513,15 @@ function mergeProductData(product, mercadoLivreData) {
     available: mercadoLivreData.available ?? product.available,
     rating,
     reviews,
-    meliType: mercadoLivreData.type || null,
-    meliStatus: mercadoLivreData.status || null,
+    meliType: mercadoLivreData.type || product.meliType || null,
+    meliStatus: mercadoLivreData.status || product.meliStatus || null,
     itemId: mercadoLivreData.itemId || product.itemId || null,
     catalogProductId: mercadoLivreData.catalogProductId || product.catalogProductId || null,
     sourceInput: mercadoLivreData.sourceInput || product.sourceInput || null,
     resolvedUrl: mercadoLivreData.resolvedUrl || product.resolvedUrl || null,
     stock: mercadoLivreData.stock ?? product.stock ?? null,
     soldQuantity: mercadoLivreData.soldQuantity ?? product.soldQuantity ?? null,
-    mercadoLivrePermalink: mercadoLivreData.permalink || null,
+    mercadoLivrePermalink: mercadoLivreData.permalink || product.mercadoLivrePermalink || product.resolvedUrl || null,
     seller: mercadoLivreData.seller || product.seller || null,
     syncedAt: mercadoLivreData.fetchedAt,
     dataSource,
@@ -743,62 +754,66 @@ async function persistSyncedImportedProduct(originalProduct, syncedProduct) {
 function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreError, sourceInput, meliId, category, affiliateUrl, tags, featured, available, manualPrice }) {
   const id = existingProduct?.id || `meli-${meliId.toLowerCase()}`;
   const sku = existingProduct?.sku || `meli-${meliId}`;
-  const mercadoLivreTitle = isReviewTitle(mercadoLivreData?.title) ? "" : mercadoLivreData?.title;
   const preserveManual = Boolean(existingProduct?.manualDataUpdatedAt);
+  const finalMercadoLivre = normalizeFinalMercadoLivreData(mercadoLivreData);
   const existingImages = normalizeImageList(existingProduct?.images).filter(usefulImage);
-  const mercadoLivreImages = normalizeImageList(mercadoLivreData?.images).filter(usefulImage);
+  const mercadoLivreImages = finalMercadoLivre.images;
   const title = preserveManual
-    ? meaningfulProductText(existingProduct?.name) || meaningfulProductText(mercadoLivreTitle) || `Produto Mercado Livre ${meliId} — revisar título`
-    : meaningfulProductText(mercadoLivreTitle) || meaningfulProductText(existingProduct?.name) || `Produto Mercado Livre ${meliId} — revisar título`;
+    ? meaningfulProductText(existingProduct?.name) || finalMercadoLivre.title || fallbackTitle(meliId, "título manual/ML ausente")
+    : finalMercadoLivre.title || meaningfulProductText(existingProduct?.name) || fallbackTitle(meliId, "título ML ausente");
   const productType = category || existingProduct?.productType || "Mercado Livre";
   const categorySlug = slugify(category);
-  const hasMercadoLivrePrice = Number.isFinite(Number(mercadoLivreData?.price)) && Number(mercadoLivreData?.price) > 0;
+  const hasMercadoLivrePrice = finalMercadoLivre.price !== null;
   const hasManualPrice = Number.isFinite(Number(manualPrice)) && Number(manualPrice) > 0;
-  const hasImage = Boolean(usefulImage(mercadoLivreData?.heroImage) || mercadoLivreImages.length || usefulImage(existingProduct?.heroImage) || existingImages.length);
+  const hasImage = Boolean(finalMercadoLivre.heroImage || mercadoLivreImages.length || usefulImage(existingProduct?.heroImage) || existingImages.length);
   const syncStatus = hasImage && !/revisar título/i.test(title) ? "synced" : "partial";
   const syncWarnings = buildImportWarnings({ mercadoLivreData, mercadoLivreError, hasMercadoLivrePrice, hasManualPrice, hasImage, title });
+  const description = preserveManual
+    ? meaningfulProductText(existingProduct?.description) || finalMercadoLivre.description || title
+    : finalMercadoLivre.description || meaningfulProductText(existingProduct?.description) || title;
+  const images = preserveManual && existingImages.length ? existingImages : mercadoLivreImages.length ? mercadoLivreImages : existingImages;
+  const heroImage = preserveManual
+    ? usefulImage(existingProduct?.heroImage) || existingImages[0] || finalMercadoLivre.heroImage || mercadoLivreImages[0] || fallbackImage("imagem manual/ML ausente")
+    : finalMercadoLivre.heroImage || mercadoLivreImages[0] || usefulImage(existingProduct?.heroImage) || existingImages[0] || fallbackImage("imagem ML ausente");
+  const finalPrice = hasManualPrice ? Number(manualPrice) : finalMercadoLivre.price ?? positiveNumberOrNull(existingProduct?.price);
 
   return {
     id,
     sku,
     name: title,
     meliId,
-    meliType: mercadoLivreData?.type || null,
-    itemId: mercadoLivreData?.itemId || (mercadoLivreData?.type === "item" ? meliId : null),
-    catalogProductId: mercadoLivreData?.catalogProductId || (mercadoLivreData?.type === "catalog_product" ? meliId : null),
+    meliType: finalMercadoLivre.type || null,
+    itemId: finalMercadoLivre.itemId || (finalMercadoLivre.type === "item" ? meliId : null),
+    catalogProductId: finalMercadoLivre.catalogProductId || (finalMercadoLivre.type === "catalog_product" ? meliId : null),
     sourceInput: String(sourceInput || "").trim(),
-    resolvedUrl: mercadoLivreData?.resolvedUrl || null,
+    resolvedUrl: finalMercadoLivre.resolvedUrl || null,
     category,
     categorySlug,
     categoryTags: [categorySlug],
     productType,
-    description: preserveManual
-      ? meaningfulProductText(existingProduct?.description) || meaningfulProductText(mercadoLivreData?.description) || title
-      : meaningfulProductText(mercadoLivreData?.description) || meaningfulProductText(existingProduct?.description) || title,
-    images: preserveManual && existingImages.length ? existingImages : mercadoLivreImages.length ? mercadoLivreImages : existingImages,
-    heroImage: preserveManual
-      ? usefulImage(existingProduct?.heroImage) || existingImages[0] || usefulImage(mercadoLivreData?.heroImage) || mercadoLivreImages[0] || "/imagens/logo/logo.png"
-      : usefulImage(mercadoLivreData?.heroImage) || mercadoLivreImages[0] || usefulImage(existingProduct?.heroImage) || existingImages[0] || "/imagens/logo/logo.png",
+    description,
+    images,
+    heroImage,
     tags: [...new Set(tags)],
     affiliateUrl,
-    price: hasManualPrice ? Number(manualPrice) : hasMercadoLivrePrice ? Number(mercadoLivreData.price) : positiveNumberOrNull(existingProduct?.price),
-    oldPrice: mercadoLivreData?.oldPrice ?? existingProduct?.oldPrice ?? null,
-    available: Boolean(available ?? mercadoLivreData?.available ?? existingProduct?.available ?? true),
+    price: finalPrice,
+    oldPrice: finalMercadoLivre.oldPrice ?? existingProduct?.oldPrice ?? null,
+    available: Boolean(available ?? finalMercadoLivre.available ?? existingProduct?.available ?? true),
     badge: existingProduct?.badge || "Importado",
-    rating: mercadoLivreData?.rating ?? existingProduct?.rating ?? null,
-    reviews: mercadoLivreData?.reviews ?? mercadoLivreData?.soldQuantity ?? existingProduct?.reviews ?? null,
-    mercadoLivrePermalink: mercadoLivreData?.permalink || existingProduct?.mercadoLivrePermalink || null,
-    meliStatus: mercadoLivreData?.status || null,
-    stock: mercadoLivreData?.stock ?? null,
-    soldQuantity: mercadoLivreData?.soldQuantity ?? null,
-    seller: mercadoLivreData?.seller || null,
+    rating: finalMercadoLivre.rating ?? existingProduct?.rating ?? null,
+    reviews: finalMercadoLivre.reviews ?? finalMercadoLivre.soldQuantity ?? existingProduct?.reviews ?? null,
+    mercadoLivrePermalink: finalMercadoLivre.permalink || existingProduct?.mercadoLivrePermalink || null,
+    meliStatus: finalMercadoLivre.status || null,
+    stock: finalMercadoLivre.stock ?? null,
+    soldQuantity: finalMercadoLivre.soldQuantity ?? null,
+    seller: finalMercadoLivre.seller || null,
     featured: Boolean(featured),
     importedFromMercadoLivre: true,
     importedAt: new Date().toISOString(),
-    syncedAt: mercadoLivreData?.fetchedAt || new Date().toISOString(),
-    dataSource: syncStatus === "synced" ? buildMercadoLivreDataSource(mercadoLivreData?.type, syncStatus) : "mercadolivre-partial",
+    syncedAt: finalMercadoLivre.fetchedAt || new Date().toISOString(),
+    dataSource: syncStatus === "synced" ? buildMercadoLivreDataSource(finalMercadoLivre.type, syncStatus) : "mercadolivre-partial",
     syncStatus,
-    syncMethod: mercadoLivreData?.syncMethod || (syncStatus === "synced" ? "API OK" : "Manual/revisar"),
+    syncMethod: finalMercadoLivre.syncMethod || (syncStatus === "synced" ? "API OK" : "Manual/revisar"),
     syncWarnings,
     syncWarning: syncWarnings[0] || null,
     manualPriceOverride: hasManualPrice
@@ -818,6 +833,82 @@ function buildImportWarnings({ mercadoLivreData, mercadoLivreError, hasMercadoLi
   ].filter(Boolean))];
 }
 
+function normalizeFinalMercadoLivreData(data) {
+  const title = isReviewTitle(data?.title) ? "" : meaningfulProductText(data?.title || data?.name);
+  const description = meaningfulProductText(data?.description || data?.summary) || title;
+  const images = [...new Set([
+    usefulImage(data?.heroImage),
+    ...normalizeImageList(data?.images).filter(usefulImage),
+    usefulImage(data?.thumbnail)
+  ].filter(Boolean))];
+  const price = positiveNumberOrNull(firstDefined([
+    data?.price,
+    data?.chosenPrice,
+    data?.mercadoLivreParsedPrice,
+    data?.rawPrice,
+    data?.sale_price,
+    data?.salePrice,
+    data?.current_price,
+    data?.currentPrice
+  ]));
+  if (!title && data) console.log("[ML FALLBACK TRIGGERED]", "título final ML ausente ou genérico");
+  if (!images.length && data) console.log("[ML FALLBACK TRIGGERED]", "imagem final ML ausente ou inválida");
+  if (price === null && data) console.log("[ML FALLBACK TRIGGERED]", "preço final ML ausente");
+  return {
+    title,
+    description,
+    images,
+    heroImage: images[0] || "",
+    price,
+    oldPrice: positiveNumberOrNull(data?.oldPrice),
+    type: data?.type || null,
+    itemId: data?.itemId || null,
+    catalogProductId: data?.catalogProductId || null,
+    resolvedUrl: data?.resolvedUrl || null,
+    permalink: data?.permalink || null,
+    available: data?.available,
+    status: data?.status || null,
+    stock: data?.stock,
+    soldQuantity: data?.soldQuantity,
+    seller: data?.seller || null,
+    rating: data?.rating,
+    reviews: data?.reviews,
+    fetchedAt: data?.fetchedAt || null,
+    syncMethod: data?.syncMethod || null
+  };
+}
+
+function fallbackTitle(meliId, reason) {
+  console.log("[ML FALLBACK TRIGGERED]", reason);
+  return `Produto Mercado Livre ${meliId} — revisar título`;
+}
+
+function fallbackImage(reason) {
+  console.log("[ML FALLBACK TRIGGERED]", reason);
+  return "/imagens/logo/logo.png";
+}
+
+function summarizeProductForLog(product) {
+  return {
+    id: product?.id,
+    meliId: product?.meliId,
+    meliType: product?.meliType,
+    itemId: product?.itemId,
+    catalogProductId: product?.catalogProductId,
+    name: product?.name,
+    description: product?.description,
+    price: product?.price ?? null,
+    heroImage: product?.heroImage,
+    images: product?.images,
+    mercadoLivrePermalink: product?.mercadoLivrePermalink,
+    affiliateUrl: product?.affiliateUrl,
+    dataSource: product?.dataSource,
+    syncStatus: product?.syncStatus,
+    syncMethod: product?.syncMethod,
+    syncWarnings: product?.syncWarnings
+  };
+}
+
 function priceSourceMessage(syncMethod) {
   if (syncMethod === "Fallback HTML") return "Preço puxado do HTML";
   if (syncMethod === "Fallback search") return "Preço puxado da busca";
@@ -832,6 +923,7 @@ function isReviewTitle(value) {
 function meaningfulProductText(value) {
   const text = String(value || "").trim();
   if (!text) return "";
+  if (isReviewTitle(text)) return "";
   if (/^(mercado\s*livre|mercadolivre|produto\s+mercado\s+livre)$/i.test(text)) return "";
   if (/^mercado\s*livre\s+brasil$/i.test(text)) return "";
   return text;
