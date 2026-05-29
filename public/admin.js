@@ -126,7 +126,7 @@ async function onManualCreate(event) {
   const data = new FormData(form);
   const payload = {
     name: text(data, "name"),
-    price: Number(text(data, "price")),
+    price: numberOrNull(text(data, "price")),
     oldPrice: numberOrNull(text(data, "oldPrice")),
     affiliateUrl: text(data, "affiliateUrl"),
     category: text(data, "category") || defaultCategoryName,
@@ -165,7 +165,7 @@ async function onEditSave(event) {
   const oldPrice = numberOrNull(text(data, "oldPrice"));
   const payload = {
     name: text(data, "name"),
-    price: Number(text(data, "price")),
+    price: numberOrNull(text(data, "price")),
     oldPrice,
     affiliateUrl: text(data, "affiliateUrl"),
     category: text(data, "category"),
@@ -600,7 +600,7 @@ function openEditor(product) {
   nodes.editForm.elements.affiliateUrl.value = product.affiliateUrl || "";
   nodes.editForm.elements.category.value = product.category || defaultCategoryName;
   nodes.editForm.elements.description.value = product.description || "";
-  nodes.editForm.elements.images.value = (product.images || []).join("\n");
+  nodes.editForm.elements.images.value = (product.images?.length ? product.images : [product.heroImage].filter(Boolean)).join("\n");
   nodes.editForm.elements.tags.value = (product.tags || []).join(", ");
   nodes.editForm.elements.badge.value = product.badge || "";
   nodes.editForm.elements.featured.checked = Boolean(product.featured);

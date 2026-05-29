@@ -334,8 +334,10 @@ async function buildManualProducts() {
             .sort((a, b) => naturalNumber(a) - naturalNumber(b))
         : [];
 
-      const fileImages = files.map((file) => `/imagens/tecnologia/${folder}/${file}`);
-      const images = fileImages.length ? fileImages : normalizeImageList(catalog.images);
+      const fileImages = files.map((file) => `/imagens/tecnologia/${folder}/${file}`).filter(usefulImage);
+      const storedImages = normalizeImageList(catalog.images).filter(usefulImage);
+      const prefersStoredImages = Boolean(catalog.manualDataUpdatedAt || catalog.importedFromMercadoLivre || catalog.importedManual || !folderNames.has(folder));
+      const images = prefersStoredImages && storedImages.length ? storedImages : fileImages.length ? fileImages : storedImages;
       const affiliateUrl = catalog.affiliateUrl || affiliateLinks[index] || null;
       const price = catalog.price;
       const category = catalog.category;
@@ -350,7 +352,7 @@ async function buildManualProducts() {
         id,
         sku: folder,
         order: index + 1,
-        name: catalog.name,
+        name: meaningfulProductText(catalog.name) || `Produto ${id}`,
         category,
         categorySlug,
         productType,
@@ -363,9 +365,9 @@ async function buildManualProducts() {
         resolvedUrl: catalog.resolvedUrl || null,
         meliUrl: catalog.meliUrl || null,
         mercadoLivrePermalink: catalog.mercadoLivrePermalink || null,
-        description: catalog.description,
+        description: meaningfulProductText(catalog.description) || meaningfulProductText(catalog.name) || `Produto ${id}`,
         images,
-        heroImage: catalog.heroImage || images[0] || "/imagens/logo/logo.png",
+        heroImage: usefulImage(catalog.heroImage) || images[0] || "/imagens/logo/logo.png",
         affiliateUrl,
         price,
         oldPrice: catalog.oldPrice ?? null,
@@ -429,9 +431,10 @@ function mergeProductData(product, mercadoLivreData) {
     };
   }
 
+  const hasManualOverride = Boolean(product.manualDataUpdatedAt);
   const mercadoLivreImages = normalizeImageList(mercadoLivreData.images).filter(usefulImage);
   const productImages = normalizeImageList(product.images).filter(usefulImage);
-  const images = mercadoLivreImages.length ? mercadoLivreImages : productImages;
+  const images = hasManualOverride && productImages.length ? productImages : mercadoLivreImages.length ? mercadoLivreImages : productImages;
   const rawMercadoLivrePrice = firstDefined([
     mercadoLivreData.price,
     mercadoLivreData.rawPrice,
@@ -444,7 +447,7 @@ function mergeProductData(product, mercadoLivreData) {
   ]);
   const mlPrice = Number(rawMercadoLivrePrice);
   const hasMercadoLivrePrice = Number.isFinite(mlPrice) && mlPrice > 0;
-  const hasManualPriceOverride = Boolean(product.manualPriceOverride) && positiveNumberOrNull(product.price) !== null;
+  const hasManualPriceOverride = Boolean(product.manualPriceOverride || hasManualOverride) && positiveNumberOrNull(product.price) !== null;
   const price = hasManualPriceOverride ? positiveNumberOrNull(product.price) : hasMercadoLivrePrice ? mlPrice : positiveNumberOrNull(product.price);
   const rawMercadoLivreOldPrice = mercadoLivreData.oldPrice;
   const mlOldPrice = Number(rawMercadoLivreOldPrice);
@@ -452,7 +455,9 @@ function mergeProductData(product, mercadoLivreData) {
   const syncStatus = hasMercadoLivrePrice || hasManualPriceOverride ? "synced" : mercadoLivreData.syncStatus || "partial";
   const dataSource = hasManualPriceOverride && !hasMercadoLivrePrice ? "mercadolivre-partial" : buildMercadoLivreDataSource(mercadoLivreData.type, syncStatus);
   const discount = oldPrice && price ? Math.max(0, Math.round(((oldPrice - price) / oldPrice) * 100)) : product.discount;
-  const heroImage = usefulImage(mercadoLivreData.heroImage) || images[0] || usefulImage(product.heroImage) || "/imagens/logo/logo.png";
+  const heroImage = hasManualOverride
+    ? usefulImage(product.heroImage) || images[0] || usefulImage(mercadoLivreData.heroImage) || "/imagens/logo/logo.png"
+    : usefulImage(mercadoLivreData.heroImage) || images[0] || usefulImage(product.heroImage) || "/imagens/logo/logo.png";
   const rating = mercadoLivreData.rating ?? product.rating;
   const reviews = mercadoLivreData.reviews ?? mercadoLivreData.soldQuantity ?? product.reviews;
 
@@ -471,14 +476,24 @@ function mergeProductData(product, mercadoLivreData) {
   console.log(
     `[ML SYNC] Aplicando merge em ${product.id}: type=${mercadoLivreData.type || "unknown"} price=${hasMercadoLivrePrice ? mlPrice : "fallback-manual"} dataSource=${dataSource} syncStatus=${syncStatus}`
   );
+  if (hasManualOverride) {
+    console.log(`[PRODUCT PERSISTENCE] Mantendo edição manual em ${product.id} como prioridade sobre dados Mercado Livre.`);
+  }
+  if (!mercadoLivreImages.length && normalizeImageList(mercadoLivreData.images).length) {
+    console.log(`[PRODUCT PERSISTENCE] Imagens Mercado Livre ignoradas em ${product.id} por fallback/logo/placeholder.`);
+  }
   if (product.id === "tech-001" && dataSource.startsWith("mercadolivre")) {
     console.log("[ML SYNC] Produto tech-001 sincronizado");
   }
 
   const mergedProduct = {
     ...product,
-    name: isReviewTitle(mercadoLivreData.title) ? product.name : meaningfulProductText(mercadoLivreData.title) || product.name,
-    description: meaningfulProductText(mercadoLivreData.description) || product.description,
+    name: hasManualOverride
+      ? meaningfulProductText(product.name) || meaningfulProductText(mercadoLivreData.title) || product.name
+      : isReviewTitle(mercadoLivreData.title) ? product.name : meaningfulProductText(mercadoLivreData.title) || product.name,
+    description: hasManualOverride
+      ? meaningfulProductText(product.description) || meaningfulProductText(mercadoLivreData.description) || product.description
+      : meaningfulProductText(mercadoLivreData.description) || product.description,
     price,
     oldPrice,
     discount,
@@ -601,7 +616,7 @@ export function finalizeMercadoLivreProduct(product) {
     console.log(`[FINAL PRODUCT STATUS] ${JSON.stringify({ id: product.id, syncStatus: product.syncStatus })}`);
   }
 
-  if (!hasMercadoLivrePrice) return product;
+  if (!hasMercadoLivrePrice || ((product.manualDataUpdatedAt || product.manualPriceOverride) && positiveNumberOrNull(product.price) !== null)) return product;
 
   return {
     ...product,
@@ -671,6 +686,7 @@ async function readImportedProducts() {
 async function writeImportedProducts(products) {
   await fs.mkdir(path.dirname(importedProductsFile), { recursive: true });
   await fs.writeFile(importedProductsFile, `${JSON.stringify({ products }, null, 2)}\n`);
+  console.log(`[PRODUCT PERSISTENCE] imported-products.json salvo com ${products.length} produto(s).`);
 }
 
 async function persistSyncedImportedProduct(originalProduct, syncedProduct) {
@@ -678,18 +694,26 @@ async function persistSyncedImportedProduct(originalProduct, syncedProduct) {
   const index = importedProducts.findIndex((product) => product.id === originalProduct.id || product.sku === originalProduct.sku || (originalProduct.meliId && product.meliId === originalProduct.meliId));
   if (index === -1) return;
   const current = importedProducts[index];
+  const preserveManual = Boolean(current.manualDataUpdatedAt || originalProduct.manualDataUpdatedAt);
+  const currentImages = normalizeImageList(current.images).filter(usefulImage);
+  const syncedImages = normalizeImageList(syncedProduct.images).filter(usefulImage);
+  if (preserveManual) {
+    console.log(`[PRODUCT PERSISTENCE] Sync preservou edição manual persistida em ${current.id || current.sku}.`);
+  }
   const next = {
     ...current,
-    name: meaningfulProductText(syncedProduct.name) || current.name,
-    description: meaningfulProductText(syncedProduct.description) || current.description,
-    price: current.manualPriceOverride && positiveNumberOrNull(current.price) !== null
+    name: preserveManual ? meaningfulProductText(current.name) || meaningfulProductText(syncedProduct.name) || current.name : meaningfulProductText(syncedProduct.name) || current.name,
+    description: preserveManual ? meaningfulProductText(current.description) || meaningfulProductText(syncedProduct.description) || current.description : meaningfulProductText(syncedProduct.description) || current.description,
+    price: (preserveManual || current.manualPriceOverride) && positiveNumberOrNull(current.price) !== null
       ? positiveNumberOrNull(current.price)
       : Number.isFinite(Number(syncedProduct.mercadoLivreParsedPrice)) && Number(syncedProduct.mercadoLivreParsedPrice) > 0
       ? Number(syncedProduct.mercadoLivreParsedPrice)
       : positiveNumberOrNull(current.price),
     oldPrice: syncedProduct.oldPrice ?? current.oldPrice ?? null,
-    images: normalizeImageList(syncedProduct.images).filter(usefulImage).length ? normalizeImageList(syncedProduct.images).filter(usefulImage) : current.images || [],
-    heroImage: usefulImage(syncedProduct.heroImage) || usefulImage(current.heroImage) || "/imagens/logo/logo.png",
+    images: preserveManual && currentImages.length ? currentImages : syncedImages.length ? syncedImages : currentImages,
+    heroImage: preserveManual
+      ? usefulImage(current.heroImage) || currentImages[0] || usefulImage(syncedProduct.heroImage) || syncedImages[0] || "/imagens/logo/logo.png"
+      : usefulImage(syncedProduct.heroImage) || syncedImages[0] || usefulImage(current.heroImage) || currentImages[0] || "/imagens/logo/logo.png",
     available: syncedProduct.available ?? current.available,
     mercadoLivrePermalink: syncedProduct.mercadoLivrePermalink || current.mercadoLivrePermalink || null,
     meliType: syncedProduct.meliType || current.meliType || null,
@@ -720,12 +744,17 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
   const id = existingProduct?.id || `meli-${meliId.toLowerCase()}`;
   const sku = existingProduct?.sku || `meli-${meliId}`;
   const mercadoLivreTitle = isReviewTitle(mercadoLivreData?.title) ? "" : mercadoLivreData?.title;
-  const title = meaningfulProductText(mercadoLivreTitle) || meaningfulProductText(existingProduct?.name) || `Produto Mercado Livre ${meliId} — revisar título`;
+  const preserveManual = Boolean(existingProduct?.manualDataUpdatedAt);
+  const existingImages = normalizeImageList(existingProduct?.images).filter(usefulImage);
+  const mercadoLivreImages = normalizeImageList(mercadoLivreData?.images).filter(usefulImage);
+  const title = preserveManual
+    ? meaningfulProductText(existingProduct?.name) || meaningfulProductText(mercadoLivreTitle) || `Produto Mercado Livre ${meliId} — revisar título`
+    : meaningfulProductText(mercadoLivreTitle) || meaningfulProductText(existingProduct?.name) || `Produto Mercado Livre ${meliId} — revisar título`;
   const productType = category || existingProduct?.productType || "Mercado Livre";
   const categorySlug = slugify(category);
   const hasMercadoLivrePrice = Number.isFinite(Number(mercadoLivreData?.price)) && Number(mercadoLivreData?.price) > 0;
   const hasManualPrice = Number.isFinite(Number(manualPrice)) && Number(manualPrice) > 0;
-  const hasImage = Boolean(mercadoLivreData?.heroImage || mercadoLivreData?.images?.length || existingProduct?.heroImage || existingProduct?.images?.length);
+  const hasImage = Boolean(usefulImage(mercadoLivreData?.heroImage) || mercadoLivreImages.length || usefulImage(existingProduct?.heroImage) || existingImages.length);
   const syncStatus = (hasMercadoLivrePrice || hasManualPrice) && hasImage && !/revisar título/i.test(title) ? "synced" : "partial";
   const syncWarnings = buildImportWarnings({ mercadoLivreData, mercadoLivreError, hasMercadoLivrePrice, hasManualPrice, hasImage, title });
 
@@ -743,9 +772,13 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
     categorySlug,
     categoryTags: [categorySlug],
     productType,
-    description: meaningfulProductText(mercadoLivreData?.description) || meaningfulProductText(existingProduct?.description) || title,
-    images: normalizeImageList(mercadoLivreData?.images).length ? normalizeImageList(mercadoLivreData?.images) : normalizeImageList(existingProduct?.images),
-    heroImage: usefulImage(mercadoLivreData?.heroImage) || usefulImage(mercadoLivreData?.images?.[0]) || usefulImage(existingProduct?.heroImage) || usefulImage(existingProduct?.images?.[0]) || "/imagens/logo/logo.png",
+    description: preserveManual
+      ? meaningfulProductText(existingProduct?.description) || meaningfulProductText(mercadoLivreData?.description) || title
+      : meaningfulProductText(mercadoLivreData?.description) || meaningfulProductText(existingProduct?.description) || title,
+    images: preserveManual && existingImages.length ? existingImages : mercadoLivreImages.length ? mercadoLivreImages : existingImages,
+    heroImage: preserveManual
+      ? usefulImage(existingProduct?.heroImage) || existingImages[0] || usefulImage(mercadoLivreData?.heroImage) || mercadoLivreImages[0] || "/imagens/logo/logo.png"
+      : usefulImage(mercadoLivreData?.heroImage) || mercadoLivreImages[0] || usefulImage(existingProduct?.heroImage) || existingImages[0] || "/imagens/logo/logo.png",
     tags: [...new Set(tags)],
     affiliateUrl,
     price: hasManualPrice ? Number(manualPrice) : hasMercadoLivrePrice ? Number(mercadoLivreData.price) : positiveNumberOrNull(existingProduct?.price),
@@ -816,6 +849,7 @@ function positiveNumberOrNull(value) {
 }
 
 function buildManualDataOverride(existingProduct, updates) {
+  console.log(`[PRODUCT PERSISTENCE] Salvando edição manual de ${existingProduct.id || existingProduct.sku}: ${Object.keys(updates).join(", ")}`);
   const override = {
     id: existingProduct.id,
     sku: existingProduct.sku,
@@ -904,8 +938,12 @@ function validateAffiliateUrl(value) {
 
 function validateOptionalNumber(value, field, { allowNull }) {
   if (value === null && allowNull) return null;
+  if (value === null || value === "") {
+    if (allowNull) return null;
+    throw createPublicError(`${field} deve ser um número válido.`, 400);
+  }
   const number = Number(value);
-  if (!Number.isFinite(number) || number < 0) {
+  if (!Number.isFinite(number) || number < 0 || (field === "price" && number <= 0)) {
     throw createPublicError(`${field} deve ser um número válido.`, 400);
   }
   return number;
@@ -944,11 +982,13 @@ function upsertImportedProduct(products, product) {
 }
 
 function toRuntimeProduct(importedProduct, existingProduct) {
+  const importedImages = normalizeImageList(importedProduct.images).filter(usefulImage);
+  const existingImages = normalizeImageList(existingProduct?.images).filter(usefulImage);
   return {
     ...(existingProduct || {}),
     ...importedProduct,
-    images: importedProduct.images?.length ? importedProduct.images : existingProduct?.images || [],
-    heroImage: importedProduct.heroImage || existingProduct?.heroImage || "/imagens/logo/logo.png",
+    images: importedImages.length ? importedImages : existingImages,
+    heroImage: usefulImage(importedProduct.heroImage) || importedImages[0] || usefulImage(existingProduct?.heroImage) || existingImages[0] || "/imagens/logo/logo.png",
     available: importedProduct.available ?? existingProduct?.available ?? true,
     dataSource: importedProduct.dataSource || "manual",
     syncStatus: importedProduct.syncStatus || "fallback"
