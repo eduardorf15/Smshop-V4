@@ -36,6 +36,9 @@ export async function fetchMercadoLivreData(input, options = {}) {
   }
 
   const finalPayload = finalizePayload(merged, normalizedInput);
+  if (trace.auth?.authMode === "oauth" && /html/i.test(finalPayload.source) && trace.attempts.some((attempt) => attempt.layer === "api")) {
+    finalPayload.syncMethod = "hybrid-oauth-html";
+  }
   finalPayload.officialAccessDenied = officialAccessDenied(trace);
   if (finalPayload.officialAccessDenied && (!finalPayload.title || !finalPayload.images.length)) {
     finalPayload.blockedReason = "Mercado Livre negou acesso oficial a este recurso.";
@@ -106,6 +109,9 @@ export async function parseMercadoLivreHtml(html, sourceUrl = "", trace = null) 
     ""
   );
   const price = firstPositive(rawPrices.map((item) => parsePrice(item.value)));
+  const titleCandidate = rawTitles.find((item) => cleanTitle(item.value));
+  const imageCandidate = rawImages.find((item) => isValidImage(item.value));
+  const priceCandidate = rawPrices.find((item) => parsePrice(item.value) !== null);
 
   const parsed = {
     title,
@@ -118,6 +124,9 @@ export async function parseMercadoLivreHtml(html, sourceUrl = "", trace = null) 
     seller: null,
     attributes: [],
     source: "html",
+    titleSource: titleCandidate?.source || null,
+    imageSource: imageCandidate?.source || null,
+    priceSource: priceCandidate?.source || null,
     confidence: confidence({ title, images, price }),
     htmlExtraction: {
       titleCandidates: rawTitles,
@@ -451,7 +460,10 @@ function fromApiItem(item, descriptionData = null, picturesData = null) {
     permalink: item.permalink || null,
     seller: normalizeSeller(item.seller || item.seller_id),
     attributes: Array.isArray(item.attributes) ? item.attributes : [],
-    source: "api:item",
+    source: item.title || extractPrice(item) || images.length ? "api:item" : "api:item-description",
+    titleSource: item.title ? "api:item.title" : null,
+    imageSource: images.length ? "api:item.pictures" : null,
+    priceSource: extractPrice(item) ? "api:item.price" : null,
     confidence: 0.95,
     itemId: item.id || null,
     catalogId: item.catalog_product_id || null,
@@ -485,6 +497,9 @@ function fromApiCatalog(product) {
     seller: normalizeSeller(winner.seller || winner.seller_id),
     attributes: Array.isArray(product.attributes) ? product.attributes : [],
     source: "api:catalog",
+    titleSource: product.name || product.title ? "api:catalog.title" : null,
+    imageSource: images.length || product.thumbnail || winner.thumbnail ? "api:catalog.pictures" : null,
+    priceSource: firstPositive([extractPrice(product), extractPrice(winner)]) ? "api:catalog.price" : null,
     confidence: 0.9,
     catalogId: product.id || null,
     itemId: winner.item_id || winner.id || null,
@@ -511,6 +526,9 @@ function fromOffer(offer) {
     seller: normalizeSeller(item.seller || item.seller_id),
     attributes: Array.isArray(item.attributes) ? item.attributes : [],
     source: item.source || "offer",
+    titleSource: item.title || item.name ? `${item.source || "offer"}.title` : null,
+    imageSource: images.length ? `${item.source || "offer"}.thumbnail` : null,
+    priceSource: extractPrice(item) ? `${item.source || "offer"}.price` : null,
     confidence: 0.75,
     itemId: item.item_id || item.id || null,
     catalogId: item.catalog_product_id || null,
@@ -538,6 +556,9 @@ function mergePayloads(base, extra) {
     seller: a.seller || b.seller || null,
     attributes: a.attributes.length ? a.attributes : b.attributes,
     source: [a.source, b.source].filter(Boolean).join("+"),
+    titleSource: cleanTitle(a.title) ? a.titleSource : b.titleSource,
+    imageSource: a.images.length || isValidImage(a.thumbnail) ? a.imageSource : b.imageSource,
+    priceSource: a.price ? a.priceSource : b.priceSource,
     confidence: Math.max(Number(a.confidence || 0), Number(b.confidence || 0)),
     itemId: a.itemId || b.itemId || null,
     catalogId: a.catalogId || b.catalogId || null,
@@ -560,7 +581,7 @@ function finalizePayload(payload, normalizedInput) {
   normalized.resolvedUrl = normalizedInput.resolvedUrl || normalized.permalink || null;
   normalized.sourceInput = normalizedInput.originalInput;
   normalized.syncStatus = normalized.title && normalized.images.length && normalized.price ? "synced" : "partial";
-  normalized.syncMethod = normalized.source || "pipeline";
+  normalized.syncMethod = /api:/i.test(normalized.source) && /html/i.test(normalized.source) ? "hybrid-oauth-html" : normalized.source || "pipeline";
   return normalized;
 }
 
@@ -576,6 +597,9 @@ function normalizePayload(payload) {
     seller: payload?.seller || null,
     attributes: Array.isArray(payload?.attributes) ? payload.attributes : [],
     source: payload?.source || "",
+    titleSource: payload?.titleSource || (payload?.title ? payload?.source : null),
+    imageSource: payload?.imageSource || (payload?.images?.length || payload?.thumbnail ? payload?.source : null),
+    priceSource: payload?.priceSource || (payload?.price ? payload?.source : null),
     confidence: Number(payload?.confidence || 0),
     itemId: payload?.itemId || null,
     catalogId: payload?.catalogId || payload?.catalogProductId || null,
@@ -695,6 +719,9 @@ function extractSocialPolycardPayload(objects) {
       attributes: [],
       itemId: metadata.id || null,
       catalogId: metadata.product_id || null,
+      titleSource: "social polycard title",
+      imageSource: "social polycard image",
+      priceSource: "social polycard price",
       available: true,
       fetchedAt: new Date().toISOString()
     };
@@ -767,8 +794,13 @@ function extractScriptPrices(text) {
   const patterns = [
     /"price"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)"?/gi,
     /"amount"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)"?/gi,
+    /"priceAmount"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)"?/gi,
+    /"itemPrice"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)"?/gi,
     /"formatted_amount"\s*:\s*"R\$\s*([0-9.]+,[0-9]{2})"/gi,
-    /"price_tag"[\s\S]{0,240}?"amount"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)"?/gi
+    /"price_tag"[\s\S]{0,240}?"amount"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)"?/gi,
+    /"current_price"[\s\S]{0,180}?"value"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)"?/gi,
+    /"current_price"[\s\S]{0,180}?"amount"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)"?/gi,
+    /"offers"[\s\S]{0,500}?"price"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)"?/gi
   ];
   patterns.forEach((pattern) => {
     for (const match of String(text || "").matchAll(pattern)) values.push(match[1]);
@@ -839,11 +871,11 @@ function extractOldPrice(data) {
 
 function parsePrice(value) {
   if (value === null || value === undefined || value === "") return null;
-  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : null;
+  if (typeof value === "number") return Number.isFinite(value) && value >= 1 && value <= 50000 ? value : null;
   const text = String(value).trim();
   const normalized = text.includes(",") ? text.replace(/\./g, "").replace(",", ".") : text;
   const number = Number(normalized.replace(/[^\d.]/g, ""));
-  return Number.isFinite(number) && number > 0 && number < 500000 ? number : null;
+  return Number.isFinite(number) && number >= 1 && number <= 50000 ? number : null;
 }
 
 function firstPositive(values) {
@@ -904,6 +936,10 @@ function summarizePayload(payload) {
     thumbnail: payload.thumbnail || null,
     permalink: payload.permalink || null,
     source: payload.source || null,
+    syncMethod: payload.syncMethod || null,
+    titleSource: payload.titleSource || null,
+    imageSource: payload.imageSource || null,
+    priceSource: payload.priceSource || null,
     confidence: payload.confidence || 0
   };
 }

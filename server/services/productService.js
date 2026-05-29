@@ -133,7 +133,7 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
     fallbackTriggers: importedProduct.dataQuality?.fallbackTriggers || []
   };
   const fallbackTriggers = importedProduct.dataQuality?.fallbackTriggers || [];
-  if (fallbackTriggers.includes("title") || fallbackTriggers.includes("image")) {
+  if (fallbackTriggers.includes("title") && fallbackTriggers.includes("image") && fallbackTriggers.includes("price")) {
     const message = mercadoLivreData?.officialAccessDenied
       ? "Mercado Livre bloqueou dados automáticos deste produto. Use cadastro manual/IA."
       : "Não foi possível obter título e imagem reais do Mercado Livre. Use cadastro manual/IA para evitar publicar produto genérico.";
