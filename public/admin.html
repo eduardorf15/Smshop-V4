@@ -135,8 +135,37 @@
             <label><input name="featured" type="checkbox" /> Destaque</label>
             <label><input name="available" type="checkbox" checked /> Disponível</label>
           </div>
-          <button type="submit">Cadastrar e publicar</button>
+          <div class="modal-actions">
+            <button type="submit">Cadastrar e publicar</button>
+            <button type="button" class="ghost" data-action="ai-description">Gerar descrição com IA</button>
+            <button type="button" class="ghost" data-action="ai-tags">Sugerir tags</button>
+            <button type="button" class="ghost" data-action="ai-review">Revisar produto</button>
+          </div>
         </form>
+      </section>
+
+      <section class="panel ai-panel" data-ai-panel>
+        <div class="panel-title">
+          <div>
+            <span class="eyebrow">Assistente IA</span>
+            <h2>Melhorar produto</h2>
+          </div>
+          <select data-ai-product-select aria-label="Selecionar produto para IA"></select>
+        </div>
+        <div class="ai-actions">
+          <button type="button" class="ghost" data-action="ai-description">Gerar descrição com IA</button>
+          <button type="button" class="ghost" data-action="ai-copy">Gerar texto de venda</button>
+          <button type="button" class="ghost" data-action="ai-tags">Sugerir tags</button>
+          <button type="button" class="ghost" data-action="ai-review">Revisar produto</button>
+        </div>
+        <label>
+          Resultado da IA
+          <textarea data-ai-result rows="8" placeholder="O resultado aparecerá aqui para revisão antes de aplicar."></textarea>
+        </label>
+        <div class="modal-actions">
+          <button type="button" data-action="ai-apply-description">Aplicar descrição</button>
+          <button type="button" class="ghost" data-action="ai-apply-tags">Aplicar tags</button>
+        </div>
       </section>
 
       <section class="panel">
@@ -244,6 +273,12 @@
         <div class="switch-row">
           <label><input name="featured" type="checkbox" /> Destaque</label>
           <label><input name="available" type="checkbox" /> Disponível</label>
+        </div>
+        <div class="ai-actions">
+          <button type="button" class="ghost" data-action="ai-description">Gerar descrição com IA</button>
+          <button type="button" class="ghost" data-action="ai-copy">Gerar texto de venda</button>
+          <button type="button" class="ghost" data-action="ai-tags">Sugerir tags</button>
+          <button type="button" class="ghost" data-action="ai-review">Revisar produto</button>
         </div>
         <div class="modal-actions">
           <button type="submit">Salvar alterações</button>

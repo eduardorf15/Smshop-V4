@@ -6,7 +6,9 @@ const state = {
   analytics: null,
   alerts: { total: 0, products: [], alerts: [] },
   filters: { search: "", category: "", status: "" },
-  editing: null
+  editing: null,
+  aiResult: null,
+  aiContext: null
 };
 
 const nodes = {
@@ -18,7 +20,9 @@ const nodes = {
   editor: document.querySelector("[data-editor]"),
   editForm: document.querySelector("[data-edit-form]"),
   importForm: document.querySelector("[data-import-form]"),
-  manualForm: document.querySelector("[data-manual-form]")
+  manualForm: document.querySelector("[data-manual-form]"),
+  aiProductSelect: document.querySelector("[data-ai-product-select]"),
+  aiResult: document.querySelector("[data-ai-result]")
 };
 
 boot();
@@ -31,6 +35,7 @@ async function boot() {
   renderAlerts();
   renderProducts();
   renderAnalytics();
+  renderAiProductSelect();
   setMessage("Painel atualizado. Produtos prontos para venda.", "ok");
 }
 
@@ -56,6 +61,7 @@ async function refreshAll() {
     renderAlerts();
     renderProducts();
     renderAnalytics();
+    renderAiProductSelect();
     setMessage("Painel atualizado. Produtos prontos para venda.", "ok");
   } catch (error) {
     setMessage(error.message, "error");
@@ -198,6 +204,12 @@ async function onActionClick(event) {
   if (action === "sync-all") await syncAll();
   if (action === "focus-import") nodes.importForm.querySelector("input[name='input']")?.focus();
   if (action === "debug-ml") await debugMercadoLivre();
+  if (action === "ai-description") await runAiAction("generate-description", button);
+  if (action === "ai-copy") await runAiAction("generate-sales-copy", button);
+  if (action === "ai-tags") await runAiAction("suggest-tags", button);
+  if (action === "ai-review") await runAiAction("review-product", button);
+  if (action === "ai-apply-description") applyAiDescription();
+  if (action === "ai-apply-tags") applyAiTags();
   if (action === "edit") openEditor(findProduct(id));
   if (action === "sync") await syncProduct(id);
   if (action === "delete") await deleteProduct(id);
@@ -267,6 +279,148 @@ async function debugMercadoLivre() {
   } catch (error) {
     setMessage(error.message, "error");
   }
+}
+
+async function runAiAction(kind, button) {
+  const context = getAiContext(button);
+  if (!context.product.name) {
+    setMessage("Informe ou selecione um produto antes de usar a IA.", "error");
+    return;
+  }
+
+  const endpoint = {
+    "generate-description": "/api/admin/ai/generate-description",
+    "generate-sales-copy": "/api/admin/ai/generate-sales-copy",
+    "suggest-tags": "/api/admin/ai/suggest-tags",
+    "review-product": "/api/admin/ai/review-product"
+  }[kind];
+
+  setButtonBusy(button, true);
+  setMessage("Gerando com IA...");
+  try {
+    const response = await apiFetch(endpoint, {
+      method: "POST",
+      body: JSON.stringify({ product: context.product })
+    });
+    state.aiResult = { kind, result: response.result || {} };
+    state.aiContext = context;
+    renderAiResult(state.aiResult);
+    setMessage("IA concluiu. Revise o resultado antes de aplicar.", "ok");
+  } catch (error) {
+    setMessage(error.message, "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+function getAiContext(button) {
+  if (button?.closest("[data-edit-form]")) {
+    return { source: "edit", form: nodes.editForm, product: productFromEditForm() };
+  }
+  if (button?.closest("[data-manual-form]")) {
+    return { source: "manual", form: nodes.manualForm, product: productFromManualForm() };
+  }
+  const selected = findProduct(nodes.aiProductSelect?.value);
+  return { source: "assistant", form: nodes.editForm, product: selected || {} };
+}
+
+function productFromEditForm() {
+  const data = new FormData(nodes.editForm);
+  return {
+    ...(state.editing || {}),
+    id: text(data, "id") || state.editing?.id || "",
+    name: text(data, "name"),
+    price: numberOrNull(text(data, "price")),
+    oldPrice: numberOrNull(text(data, "oldPrice")),
+    affiliateUrl: text(data, "affiliateUrl"),
+    category: text(data, "category"),
+    description: text(data, "description"),
+    images: text(data, "images"),
+    tags: splitTags(text(data, "tags")),
+    badge: text(data, "badge"),
+    featured: data.has("featured"),
+    available: data.has("available")
+  };
+}
+
+function productFromManualForm() {
+  const data = new FormData(nodes.manualForm);
+  const images = mergeImages(text(data, "heroImage"), text(data, "images"));
+  return {
+    name: text(data, "name"),
+    price: numberOrNull(text(data, "price")),
+    oldPrice: numberOrNull(text(data, "oldPrice")),
+    affiliateUrl: text(data, "affiliateUrl"),
+    category: text(data, "category") || defaultCategoryName,
+    description: text(data, "description"),
+    images,
+    heroImage: images[0] || "",
+    tags: splitTags(text(data, "tags")),
+    badge: text(data, "badge"),
+    featured: data.has("featured"),
+    available: data.has("available")
+  };
+}
+
+function renderAiResult(aiResult) {
+  if (!nodes.aiResult) return;
+  nodes.aiResult.value = JSON.stringify(aiResult.result, null, 2);
+}
+
+function applyAiDescription() {
+  const result = getEditableAiResult();
+  const description = result.fullDescription || result.shortDescription || "";
+  if (!description) {
+    setMessage("A IA não retornou descrição aplicável.", "error");
+    return;
+  }
+  const form = getTargetFormForAiApply();
+  if (!form?.elements.description) {
+    setMessage("Abra um produto ou use o cadastro manual para aplicar a descrição.", "error");
+    return;
+  }
+  form.elements.description.value = description;
+  setMessage("Descrição aplicada no formulário. Revise e salve quando quiser.", "ok");
+}
+
+function applyAiTags() {
+  const result = getEditableAiResult();
+  const tags = [
+    ...(result.searchTags || []),
+    ...(result.categoryTags || []),
+    ...(result.commercialTags || [])
+  ].filter(Boolean);
+  if (!tags.length) {
+    setMessage("A IA não retornou tags aplicáveis.", "error");
+    return;
+  }
+  const form = getTargetFormForAiApply();
+  if (!form?.elements.tags) {
+    setMessage("Abra um produto ou use o cadastro manual para aplicar tags.", "error");
+    return;
+  }
+  form.elements.tags.value = [...new Set(tags)].join(", ");
+  setMessage("Tags aplicadas no formulário. Revise e salve quando quiser.", "ok");
+}
+
+function getTargetFormForAiApply() {
+  if (state.aiContext?.source === "manual") return nodes.manualForm;
+  if (nodes.editor.open) return nodes.editForm;
+  if (state.aiContext?.source === "edit") return nodes.editForm;
+  return nodes.manualForm;
+}
+
+function getEditableAiResult() {
+  try {
+    return JSON.parse(nodes.aiResult?.value || "{}");
+  } catch {
+    return state.aiResult?.result || {};
+  }
+}
+
+function setButtonBusy(button, busy) {
+  if (!button) return;
+  button.disabled = busy;
 }
 
 function formatPrice(value) {
@@ -410,6 +564,15 @@ function renderCategoryFilter() {
   const options = getKnownCategoryNames();
   select.innerHTML = `<option value="">Todas categorias</option>${options.map((category) => `<option value="${escapeAttr(category)}">${escapeHtml(category)}</option>`).join("")}`;
   select.value = options.includes(current) ? current : "";
+}
+
+function renderAiProductSelect() {
+  if (!nodes.aiProductSelect) return;
+  const current = nodes.aiProductSelect.value;
+  nodes.aiProductSelect.innerHTML = state.products.length
+    ? state.products.map((product) => `<option value="${escapeAttr(product.id)}">${escapeHtml(product.name || product.id)}</option>`).join("")
+    : `<option value="">Nenhum produto carregado</option>`;
+  if (state.products.some((product) => product.id === current)) nodes.aiProductSelect.value = current;
 }
 
 function openEditor(product) {

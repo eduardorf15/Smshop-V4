@@ -20,6 +20,12 @@ import {
   getConnectionStatus
 } from "../services/mercadoLivreAuthService.js";
 import { debugMercadoLivreImport, fetchMercadoLivreItemForTest } from "../services/mercadoLivreService.js";
+import {
+  generateProductDescription,
+  generateSalesCopy,
+  reviewProductWithAi,
+  suggestProductTags
+} from "../services/openAiAdminService.js";
 
 const router = Router();
 
@@ -108,6 +114,42 @@ router.get("/api/admin/debug-mercadolivre", async (req, res, next) => {
   try {
     const result = await debugMercadoLivreImport(req.query.input || "");
     res.json({ ok: true, debug: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/admin/ai/generate-description", async (req, res, next) => {
+  try {
+    const result = await generateProductDescription(req.body || {});
+    res.json({ ok: true, result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/admin/ai/generate-sales-copy", async (req, res, next) => {
+  try {
+    const result = await generateSalesCopy(req.body || {});
+    res.json({ ok: true, result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/admin/ai/suggest-tags", async (req, res, next) => {
+  try {
+    const result = await suggestProductTags(req.body || {});
+    res.json({ ok: true, result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/api/admin/ai/review-product", async (req, res, next) => {
+  try {
+    const result = await reviewProductWithAi(req.body || {});
+    res.json({ ok: true, result });
   } catch (error) {
     next(error);
   }

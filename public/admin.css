@@ -82,7 +82,7 @@ button:disabled { cursor: progress; opacity: 0.58; }
   gap: 18px;
 }
 
-.toolbar, .filters, .modal-actions, .switch-row {
+.toolbar, .filters, .modal-actions, .switch-row, .ai-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -164,6 +164,20 @@ p, label, select { color: var(--muted); }
   gap: 16px;
 }
 .insight-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ai-panel {
+  display: grid;
+  gap: 13px;
+}
+.ai-panel .panel-title {
+  align-items: flex-start;
+}
+.ai-panel select {
+  width: min(360px, 100%);
+}
+.ai-actions button {
+  min-height: 38px;
+  padding: 0 12px;
+}
 
 .stack { display: grid; gap: 13px; }
 .two-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
