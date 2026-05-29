@@ -4,10 +4,11 @@ import { money } from "./utils.js";
 export function productCard(product, options = {}) {
   const compact = options.compact ? " product-card--compact" : "";
   const noir = options.noir ? " product-card--noir" : "";
+  const image = productImage(product);
   return `
     <article class="product-card${compact}${noir}" data-product-card data-product-id="${product.id}">
       <a class="product-media" href="/produto/${product.id}" aria-label="Abrir detalhes de ${escapeHtml(product.name)}">
-        <img src="${product.heroImage}" alt="${escapeHtml(product.name)}" loading="lazy" decoding="async" />
+        <img src="${image}" alt="${escapeHtml(product.name)}" loading="lazy" decoding="async" />
       </a>
       <div class="product-info">
         <div class="product-meta">
@@ -27,6 +28,13 @@ export function productCard(product, options = {}) {
       </div>
     </article>
   `;
+}
+
+function productImage(product) {
+  const images = [product?.heroImage, ...(Array.isArray(product?.images) ? product.images : [])]
+    .map((image) => String(image || "").trim())
+    .filter((image) => image && !/logo\/logo\.png|placeholder|favicon/i.test(image));
+  return images[0] || product?.heroImage || "/imagens/logo/logo.png";
 }
 
 export function affiliateButton(product, label = "Comprar oferta") {

@@ -488,7 +488,7 @@ function renderProducts() {
   nodes.products.innerHTML = products.length
     ? products.map((product) => `
       <article class="product-row" data-id="${escapeAttr(product.id)}">
-        <img src="${escapeAttr(product.heroImage || "/imagens/logo/logo.png")}" alt="${escapeAttr(product.name || product.id)}" loading="lazy" />
+        <img src="${escapeAttr(productImage(product))}" alt="${escapeAttr(product.name || product.id)}" loading="lazy" />
         <div class="product-main">
           <h3>${escapeHtml(product.name || product.id)}</h3>
           <p>${escapeHtml(product.affiliateUrl || "Sem link afiliado")}</p>
@@ -510,6 +510,13 @@ function renderProducts() {
       </article>
     `).join("")
     : `<p class="empty">Nenhum produto encontrado.</p>`;
+}
+
+function productImage(product) {
+  const images = [product?.heroImage, ...(Array.isArray(product?.images) ? product.images : [])]
+    .map((image) => String(image || "").trim())
+    .filter((image) => image && !/logo\/logo\.png|placeholder|favicon/i.test(image));
+  return images[0] || product?.heroImage || "/imagens/logo/logo.png";
 }
 
 function renderAnalytics() {

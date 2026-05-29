@@ -4,13 +4,14 @@ import { fileURLToPath } from "node:url";
 import { affiliateLinks } from "../../src/data/affiliate-links.js";
 import { productCatalog } from "../../src/data/product-catalog.js";
 import {
-  extractMercadoLivreId,
-  fetchMercadoLivreDataByInput,
   getMercadoLivreData,
   getMeliId,
   refreshMercadoLivreCache,
   resolveMercadoLivreIdFromInput
 } from "./mercadoLivreService.js";
+import { normalizeMercadoLivreInput as normalizeMercadoLivreInputV2 } from "./mercadoLivre/normalizeInput.js";
+import { fetchMercadoLivreData as fetchMercadoLivreDataV2 } from "./mercadoLivre/fetchMercadoLivreData.js";
+import { buildImportedProduct as buildImportedProductV2 } from "./mercadoLivre/buildImportedProduct.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,11 +96,7 @@ export async function refreshProductsCache() {
 }
 
 export async function importMercadoLivreProduct({ input, category = "Tecnologia", affiliateUrl, tags = [], featured = false, available = true, price = null }) {
-  const meliId = await resolveMercadoLivreIdFromInput(input);
-  if (!meliId) {
-    throw createPublicError("Informe uma URL ou ID válido do Mercado Livre.", 400);
-  }
-
+  const normalizedInput = await normalizeMercadoLivreInputV2(input);
   if (!affiliateUrl) {
     throw createPublicError("affiliateUrl é obrigatório para importar produto.", 400);
   }
@@ -107,16 +104,19 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
   const safeCategory = String(category || "Tecnologia");
   const safeTags = normalizeTags(tags);
   const manualPrice = price === null || price === undefined || price === "" ? null : validateOptionalNumber(price, "price", { allowNull: false });
+  const { data: mercadoLivreData, trace } = await fetchMercadoLivreDataV2(normalizedInput, { withTrace: true });
+  const meliId = normalizedInput.itemId || mercadoLivreData?.itemId || normalizedInput.catalogId || mercadoLivreData?.catalogId || normalizedInput.meliId || await resolveMercadoLivreIdFromInput(input);
+  if (!meliId) {
+    throw createPublicError("Informe uma URL ou ID válido do Mercado Livre.", 400);
+  }
   const existingProducts = await buildManualProducts();
   const existingProduct = existingProducts.find((product) => product.meliId === meliId);
-  const mercadoLivreData = await fetchMercadoLivreDataByInput(input, { force: true });
-  const usableMercadoLivreData = mercadoLivreData?.syncStatus === "error" ? null : mercadoLivreData;
 
   const importedProducts = await readImportedProducts();
-  const importedProduct = buildImportedProduct({
+  const importedProduct = buildImportedProductV2({
     existingProduct,
-    mercadoLivreData: usableMercadoLivreData,
-    mercadoLivreError: mercadoLivreData?.syncStatus === "error" ? mercadoLivreData.errorMessage : "",
+    mercadoLivreData,
+    normalizedInput,
     sourceInput: input,
     meliId,
     category: safeCategory,
@@ -126,6 +126,14 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
     available,
     manualPrice
   });
+  importedProduct.importTrace = {
+    normalizedInput,
+    attempts: trace.attempts,
+    parsedFields: trace.parsedFields,
+    fallbackTriggers: importedProduct.dataQuality?.fallbackTriggers || []
+  };
+  console.log("[ML PIPELINE INPUT]", JSON.stringify({ input, itemId: normalizedInput.itemId, catalogId: normalizedInput.catalogId, resolvedUrl: normalizedInput.resolvedUrl }));
+  console.log("[ML PIPELINE FOUND]", JSON.stringify(trace.parsedFields));
   console.log("[ML FINAL PAYLOAD]", JSON.stringify(summarizeProductForLog(importedProduct)));
   const nextImportedProducts = upsertImportedProduct(importedProducts, importedProduct);
 
@@ -134,20 +142,10 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
   console.log("[ML SAVED PRODUCT]", JSON.stringify(summarizeProductForLog(savedProduct)));
   cache = null;
   cacheFetchedAt = 0;
-
-  const [syncedProduct] = await syncProductsWithMercadoLivre([toRuntimeProduct(importedProduct, existingProduct)], { force: true });
-  if (syncedProduct) {
-    await persistSyncedImportedProduct(importedProduct, syncedProduct);
-    const finalImportedProducts = await readImportedProducts();
-    const finalSavedProduct = finalImportedProducts.find((product) => product.id === importedProduct.id || (importedProduct.meliId && product.meliId === importedProduct.meliId)) || syncedProduct;
-    console.log("[ML SAVED PRODUCT]", JSON.stringify(summarizeProductForLog(finalSavedProduct)));
-    cache = null;
-    cacheFetchedAt = 0;
-  }
   return {
     imported: !existingProduct,
     updated: Boolean(existingProduct),
-    product: syncedProduct
+    product: toRuntimeProduct(importedProduct, existingProduct)
   };
 }
 

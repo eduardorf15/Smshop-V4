@@ -391,10 +391,13 @@ function initReveal() {
 
 function preloadHeroImages() {
   products.slice(0, 4).forEach((product) => {
+    const image = [product.heroImage, ...(Array.isArray(product.images) ? product.images : [])]
+      .map((value) => String(value || "").trim())
+      .find((value) => value && !/logo\/logo\.png|placeholder|favicon/i.test(value)) || product.heroImage;
     const link = document.createElement("link");
     link.rel = "preload";
     link.as = "image";
-    link.href = product.heroImage;
+    link.href = image;
     document.head.appendChild(link);
   });
 }

@@ -2,6 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getValidAccessToken, readSavedToken } from "./mercadoLivreAuthService.js";
+import {
+  extractMercadoLivreId as extractMercadoLivreIdV2,
+  normalizeMercadoLivreInput as normalizeMercadoLivreInputV2
+} from "./mercadoLivre/normalizeInput.js";
+import { fetchMercadoLivreData as fetchMercadoLivreDataV2 } from "./mercadoLivre/fetchMercadoLivreData.js";
+import { buildImportedProduct as buildImportedProductV2 } from "./mercadoLivre/buildImportedProduct.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,9 +47,9 @@ export async function getMercadoLivreData(products, options = {}) {
       }
 
       try {
-        console.log(`[ML SYNC] Chamando API Mercado Livre para ${product.id} (${meliId})`);
-        const normalizedInput = await normalizeMercadoLivreInput(product.sourceInput || product.meliUrl || meliId);
-        const data = await fetchHybridMercadoLivreData({ ...normalizedInput, meliId: normalizedInput.meliId || meliId });
+        console.log(`[ML SYNC] Chamando pipeline Mercado Livre para ${product.id} (${meliId})`);
+        const normalizedInput = await normalizeMercadoLivreInputV2(product.sourceInput || product.meliUrl || meliId);
+        const data = await fetchMercadoLivreDataV2({ ...normalizedInput, meliId: normalizedInput.meliId || meliId });
         nextCache[meliId] = { fetchedAt: now, data };
         return [product.id, data];
       } catch (error) {
@@ -88,64 +94,80 @@ export async function fetchMercadoLivreDataById(meliId, options = {}) {
 }
 
 export async function fetchMercadoLivreDataByInput(input, options = {}) {
-  const normalizedInput = await normalizeMercadoLivreInput(input);
+  const normalizedInput = await normalizeMercadoLivreInputV2(input);
   if (!normalizedInput.meliId) return null;
-  if (!options.force) return fetchMercadoLivreDataById(normalizedInput.meliId, options);
-  return fetchHybridMercadoLivreData(normalizedInput, options);
+  return fetchMercadoLivreDataV2(normalizedInput, options);
 }
 
 export async function debugMercadoLivreImport(input) {
-  const normalizedInput = await normalizeMercadoLivreInput(input);
-  const debug = createDebugTrace(input, normalizedInput);
-  let data = normalizedInput.meliId ? await fetchHybridMercadoLivreData(normalizedInput, { debug }) : null;
-  if (!data && normalizedInput.resolvedUrl) {
-    data = await fetchHtmlFallback(normalizedInput.resolvedUrl, normalizedInput, debug);
-  }
-  const apiAttempts = debug.attempts.filter((attempt) => attempt.layer === "api");
-  const htmlAttempts = debug.attempts.filter((attempt) => attempt.layer === "html" || attempt.layer === "redirect");
+  const normalizedInput = await normalizeMercadoLivreInputV2(input);
+  const { data, trace } = normalizedInput.meliId || normalizedInput.resolvedUrl
+    ? await fetchMercadoLivreDataV2(normalizedInput, { withTrace: true })
+    : { data: null, trace: { attempts: [], titleCandidates: [], imageCandidates: [], priceCandidates: [], fallbackTriggers: [] } };
+  const finalPayload = data ? buildImportedProductV2({
+    mercadoLivreData: data,
+    normalizedInput,
+    sourceInput: input,
+    meliId: normalizedInput.meliId || data.itemId || data.catalogId,
+    affiliateUrl: data.permalink || normalizedInput.resolvedUrl || String(input || ""),
+    category: "Tecnologia"
+  }) : null;
+  const apiAttempts = trace.attempts.filter((attempt) => attempt.layer === "api");
+  const htmlAttempts = trace.attempts.filter((attempt) => attempt.layer === "html" || attempt.layer === "redirect");
   const chosenData = data ? {
-    meliId: data.meliId || null,
+    meliId: normalizedInput.meliId || null,
     type: data.type || null,
     name: data.title || null,
     title: data.title || null,
     description: data.description || null,
-    heroImage: data.heroImage || data.images?.[0] || null,
+    heroImage: data.thumbnail || data.images?.[0] || null,
     images: data.images || [],
     price: data.price ?? null,
     permalink: data.permalink || null,
     mercadoLivrePermalink: data.permalink || null,
     itemId: data.itemId || null,
     catalogProductId: data.catalogProductId || null,
-    syncMethod: data.syncMethod || null,
-    syncStatus: data.syncStatus || null
+    syncMethod: data.syncMethod || data.source || null,
+    syncStatus: data.syncStatus || null,
+    source: data.source || null,
+    confidence: data.confidence || 0
   } : null;
   return {
     inputOriginal: String(input || ""),
     originalInput: String(input || ""),
+    normalizedInput,
     resolvedUrl: normalizedInput.resolvedUrl,
     detectedType: normalizedInput.detectedType || normalizedInput.meliType || "unknown",
-    itemId: normalizedInput.itemId,
-    catalogProductId: normalizedInput.productId,
-    productId: normalizedInput.productId,
-    meliId: normalizedInput.meliId,
+    itemId: normalizedInput.itemId || data?.itemId || null,
+    catalogId: normalizedInput.catalogId || data?.catalogId || null,
+    catalogProductId: normalizedInput.catalogId || data?.catalogId || null,
+    productId: normalizedInput.catalogId || data?.catalogId || null,
+    meliId: normalizedInput.meliId || data?.itemId || data?.catalogId || null,
     candidateIds: normalizedInput.candidateIds || [],
     slug: normalizedInput.slug || null,
     apiAttempts,
     htmlAttempt: htmlAttempts[0] || null,
     htmlAttempts,
-    attempts: debug.attempts,
-    titleCandidates: debug.titleCandidates,
-    imageCandidates: debug.imageCandidates,
+    attempts: trace.attempts,
+    fetchAttempts: trace.attempts,
+    htmlExtraction: trace.htmlExtraction,
+    parsedFields: trace.parsedFields,
+    titleCandidates: trace.titleCandidates,
+    imageCandidates: trace.imageCandidates,
     title: data?.title || null,
-    image: data?.heroImage || data?.images?.[0] || null,
-    priceCandidates: debug.priceCandidates,
+    image: data?.thumbnail || data?.images?.[0] || null,
+    priceCandidates: trace.priceCandidates,
     chosenPrice: data?.price ?? null,
-    chosenPriceSource: debug.chosenPriceSource || data?.syncMethod || null,
+    chosenPriceSource: data?.syncMethod || data?.source || null,
     reason: data?.price ? "Preço escolhido por fonte válida." : "Nenhum preço válido entre R$ 1 e R$ 50.000 foi encontrado.",
     chosenData,
+    finalPayload,
+    persistencePayload: finalPayload,
+    savedProduct: null,
+    fallbackTriggers: finalPayload?.dataQuality?.fallbackTriggers || [],
     warnings: [...(normalizedInput.warnings || []), !normalizedInput.meliId ? "ID Mercado Livre não encontrado na entrada/resolução." : "", ...(data?.syncWarnings || [])].filter(Boolean),
-    errors: debug.attempts.filter((attempt) => !attempt.ok).map((attempt) => attempt.details).filter(Boolean),
-    syncMethod: data?.syncMethod || null,
+    errors: trace.attempts.filter((attempt) => !attempt.ok).map((attempt) => attempt.details).filter(Boolean),
+    syncMethod: data?.syncMethod || data?.source || null,
     syncWarnings: data?.syncWarnings || []
   };
 }
@@ -161,6 +183,8 @@ function extractMeliId(value) {
 }
 
 export function extractMercadoLivreId(value) {
+  const v2 = extractMercadoLivreIdV2(value);
+  if (v2) return v2;
   const text = String(value || "");
   const itemQueryMatch = text.match(/[?&](?:wid|item_id)=(ML[A-Z]{1,2}-?\d{6,})\b/i);
   if (itemQueryMatch) return normalizeMeliId(itemQueryMatch[1]);
@@ -175,11 +199,15 @@ export function extractMercadoLivreId(value) {
 }
 
 export async function resolveMercadoLivreIdFromInput(value) {
-  const normalizedInput = await normalizeMercadoLivreInput(value);
+  const normalizedInput = await normalizeMercadoLivreInputV2(value);
   return normalizedInput.meliId;
 }
 
 export async function normalizeMercadoLivreInput(value) {
+  return normalizeMercadoLivreInputV2(value);
+}
+
+async function normalizeMercadoLivreInputLegacy(value) {
   const sourceInput = String(value || "").trim();
   const normalized = {
     originalInput: sourceInput,
