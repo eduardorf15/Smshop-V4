@@ -80,7 +80,30 @@ export async function fetchMercadoLivreDataByInput(input, options = {}) {
   const normalizedInput = await normalizeMercadoLivreInput(input);
   if (!normalizedInput.meliId) return null;
   if (!options.force) return fetchMercadoLivreDataById(normalizedInput.meliId, options);
-  return fetchHybridMercadoLivreData(normalizedInput);
+  return fetchHybridMercadoLivreData(normalizedInput, options);
+}
+
+export async function debugMercadoLivreImport(input) {
+  const normalizedInput = await normalizeMercadoLivreInput(input);
+  const debug = createDebugTrace(input, normalizedInput);
+  const data = normalizedInput.meliId ? await fetchHybridMercadoLivreData(normalizedInput, { debug }) : null;
+  return {
+    inputOriginal: String(input || ""),
+    resolvedUrl: normalizedInput.resolvedUrl,
+    detectedType: normalizedInput.meliType,
+    itemId: normalizedInput.itemId,
+    productId: normalizedInput.productId,
+    meliId: normalizedInput.meliId,
+    attempts: debug.attempts,
+    title: data?.title || null,
+    image: data?.heroImage || data?.images?.[0] || null,
+    priceCandidates: debug.priceCandidates,
+    chosenPrice: data?.price ?? null,
+    chosenPriceSource: debug.chosenPriceSource || data?.syncMethod || null,
+    reason: data?.price ? "Preço escolhido por fonte válida." : "Nenhum preço válido entre R$ 1 e R$ 50.000 foi encontrado.",
+    syncMethod: data?.syncMethod || null,
+    syncWarnings: data?.syncWarnings || []
+  };
 }
 
 export function getMeliId(product) {
@@ -267,22 +290,23 @@ async function fetchMeliItem(meliId) {
   throw new Error(itemResult.details || `HTTP ${itemResult.status}`);
 }
 
-async function fetchHybridMercadoLivreData(inputInfo) {
+async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
   const normalizedInput = {
     ...(inputInfo || {}),
     meliId: normalizeMeliId(inputInfo?.meliId || inputInfo?.itemId || inputInfo?.productId || "")
   };
+  const debug = options.debug || null;
   const headers = await buildHeaders();
   const warnings = [];
-  const candidates = [];
+  const candidates = buildPublicUrlCandidates(normalizedInput);
   let apiData = null;
   let apiError = "";
 
   if (normalizedInput.itemId || (normalizedInput.meliId && detectMercadoLivreIdKind(normalizedInput.meliId) === "item")) {
     const itemId = normalizedInput.itemId || normalizedInput.meliId;
-    const itemResult = await fetchMeliResourceSafe(`items/${encodeURIComponent(itemId)}`, headers);
+    const itemResult = await fetchMeliResourceSafe(`items/${encodeURIComponent(itemId)}`, headers, debug);
     if (itemResult.ok) {
-      const descriptionResult = await fetchMeliResourceSafe(`items/${encodeURIComponent(itemId)}/description`, headers);
+      const descriptionResult = await fetchMeliResourceSafe(`items/${encodeURIComponent(itemId)}/description`, headers, debug);
       apiData = withMethod(
         {
           ...normalizeMeliItem(itemId, itemResult.data),
@@ -301,9 +325,9 @@ async function fetchHybridMercadoLivreData(inputInfo) {
 
   const productId = normalizedInput.productId || (normalizedInput.meliId && detectMercadoLivreIdKind(normalizedInput.meliId) === "catalog_product" ? normalizedInput.meliId : null);
   if (productId && needsMoreData(apiData)) {
-    const productResult = await fetchMeliResourceSafe(`products/${encodeURIComponent(productId)}`, headers);
+    const productResult = await fetchMeliResourceSafe(`products/${encodeURIComponent(productId)}`, headers, debug);
     if (productResult.ok) {
-      const resolvedPrice = await resolveMercadoLivrePrice(productId, productResult.data, headers);
+      const resolvedPrice = await resolveMercadoLivrePrice(productId, productResult.data, headers, debug);
       const catalogData = withMethod(normalizeMeliCatalogProduct(productId, productResult.data, resolvedPrice), "API OK", normalizedInput);
       apiData = mergeMercadoLivrePayload(apiData, catalogData);
       candidates.push(apiData.permalink, resolvedPrice?.permalink);
@@ -315,16 +339,30 @@ async function fetchHybridMercadoLivreData(inputInfo) {
   candidates.push(normalizedInput.resolvedUrl, normalizedInput.sourceInput);
   let mergedData = apiData;
   if (needsMoreData(mergedData)) {
-    const htmlData = await fetchBestHtmlFallback(candidates, normalizedInput);
+    const htmlData = await fetchBestHtmlFallback(candidates, normalizedInput, debug);
     if (htmlData) {
       mergedData = mergeMercadoLivrePayload(mergedData, htmlData);
     }
   }
 
   if (needsMoreData(mergedData)) {
-    const searchData = await fetchSearchFallback(mergedData?.title || normalizedInput.meliId || normalizedInput.sourceInput, headers, normalizedInput);
+    const searchData = await fetchSearchFallback(mergedData?.title || normalizedInput.meliId || normalizedInput.sourceInput, headers, normalizedInput, debug);
     if (searchData) {
       mergedData = mergeMercadoLivrePayload(mergedData, searchData);
+    }
+  }
+
+  if (needsMoreData(mergedData)) {
+    const titleSearchData = await fetchAggressiveTitleSearchFallback(mergedData?.title || "", headers, normalizedInput, debug);
+    if (titleSearchData) {
+      mergedData = mergeMercadoLivrePayload(mergedData, titleSearchData);
+    }
+  }
+
+  if (needsMoreData(mergedData)) {
+    const publicSearchData = await fetchPublicSearchHtmlFallback(mergedData?.title || "", normalizedInput, debug);
+    if (publicSearchData) {
+      mergedData = mergeMercadoLivrePayload(mergedData, publicSearchData);
     }
   }
 
@@ -333,7 +371,11 @@ async function fetchHybridMercadoLivreData(inputInfo) {
   }
 
   const finalWarnings = [...warnings, ...(mergedData.syncWarnings || [])];
-  return finalizeHybridData(mergedData, normalizedInput, finalWarnings);
+  const finalized = finalizeHybridData(mergedData, normalizedInput, finalWarnings);
+  if (debug && finalized.price) {
+    debug.chosenPriceSource = finalized.syncMethod || "unknown";
+  }
+  return finalized;
 }
 
 export async function fetchMercadoLivreItemForTest(meliId) {
@@ -374,7 +416,7 @@ export async function fetchMercadoLivreItemForTest(meliId) {
   return buildNotFoundResponse(itemResult);
 }
 
-async function fetchMeliResource(pathname, headers) {
+async function fetchMeliResource(pathname, headers, debug = null) {
   console.log(`[ML REQUEST] GET /${pathname} auth=${headers.Authorization ? "Bearer" : "public"}`);
   let lastError;
 
@@ -390,6 +432,14 @@ async function fetchMeliResource(pathname, headers) {
       clearTimeout(timeout);
       const data = await response.json().catch(() => ({}));
       console.log(`[ML RESPONSE] GET /${pathname} status=${response.status} attempt=${attempt + 1}`);
+      recordAttempt(debug, {
+        method: "GET",
+        url: `https://api.mercadolibre.com/${pathname}`,
+        layer: "api",
+        status: response.status,
+        ok: response.ok,
+        details: response.ok ? "ok" : summarizeMeliError(data, response.status)
+      });
       logRawMercadoLivreJson(pathname, data);
 
       if (!response.ok) {
@@ -407,6 +457,14 @@ async function fetchMeliResource(pathname, headers) {
     } catch (error) {
       lastError = error;
       console.log(`[ML RESPONSE] GET /${pathname} error=${error.name || "Error"} attempt=${attempt + 1}`);
+      recordAttempt(debug, {
+        method: "GET",
+        url: `https://api.mercadolibre.com/${pathname}`,
+        layer: "api",
+        status: 0,
+        ok: false,
+        details: error.message
+      });
       if (attempt === maxRetries) break;
       await waitForRetry(attempt);
     } finally {
@@ -417,10 +475,19 @@ async function fetchMeliResource(pathname, headers) {
   throw new Error(`Falha de rede Mercado Livre em /${pathname}: ${lastError?.message || "erro desconhecido"}`);
 }
 
-async function fetchMeliResourceSafe(pathname, headers) {
+async function fetchMeliResourceSafe(pathname, headers, debug = null) {
   try {
-    return await fetchMeliResource(pathname, headers);
+    const result = await fetchMeliResource(pathname, headers, debug);
+    return result;
   } catch (error) {
+    recordAttempt(debug, {
+      method: "GET",
+      url: `https://api.mercadolibre.com/${pathname}`,
+      layer: "api",
+      status: 0,
+      ok: false,
+      details: error.message
+    });
     return {
       ok: false,
       status: 0,
@@ -483,17 +550,56 @@ function meaningfulText(value) {
   return text;
 }
 
-async function fetchBestHtmlFallback(candidates, inputInfo) {
+function buildPublicUrlCandidates(inputInfo) {
+  const urls = [inputInfo.resolvedUrl, inputInfo.sourceInput].filter(Boolean);
+  const itemId = inputInfo.itemId || (detectMercadoLivreIdKind(inputInfo.meliId) === "item" ? inputInfo.meliId : null);
+  const productId = inputInfo.productId || (detectMercadoLivreIdKind(inputInfo.meliId) === "catalog_product" ? inputInfo.meliId : null);
+  if (itemId) urls.push(`https://produto.mercadolivre.com.br/${itemId.replace(/^MLB/i, "MLB-")}`);
+  if (productId) urls.push(`https://www.mercadolivre.com.br/p/${productId}`);
+  return [...new Set(urls)];
+}
+
+function createDebugTrace(input, normalizedInput) {
+  return {
+    input: String(input || ""),
+    normalizedInput,
+    attempts: [],
+    priceCandidates: [],
+    chosenPriceSource: null
+  };
+}
+
+function recordAttempt(debug, attempt) {
+  if (!debug) return;
+  debug.attempts.push({
+    at: new Date().toISOString(),
+    ...attempt
+  });
+}
+
+function recordPriceCandidate(debug, candidate) {
+  if (!debug) return;
+  const price = normalizePriceCandidate(candidate.value);
+  debug.priceCandidates.push({
+    source: candidate.source,
+    value: candidate.value,
+    parsed: price,
+    accepted: price !== null,
+    reason: price === null ? candidate.reason || "fora do intervalo válido ou não numérico" : "válido"
+  });
+}
+
+async function fetchBestHtmlFallback(candidates, inputInfo, debug = null) {
   const urls = [...new Set((candidates || []).filter((url) => /^https?:\/\//i.test(String(url || ""))))];
   for (const url of urls) {
-    const data = await fetchHtmlFallback(url, inputInfo);
+    const data = await fetchHtmlFallback(url, inputInfo, debug);
     if (data && !needsMoreData(data)) return data;
     if (data) return data;
   }
   return null;
 }
 
-async function fetchHtmlFallback(url, inputInfo) {
+async function fetchHtmlFallback(url, inputInfo, debug = null) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
   try {
@@ -506,8 +612,17 @@ async function fetchHtmlFallback(url, inputInfo) {
       signal: controller.signal
     });
     const html = await response.text();
+    recordAttempt(debug, {
+      method: "GET",
+      url,
+      finalUrl: response.url || url,
+      layer: "html",
+      status: response.status,
+      ok: response.ok,
+      details: response.ok ? `html ${html.length} bytes` : "html indisponível"
+    });
     if (!response.ok || !html) return null;
-    const parsed = parseMercadoLivreHtml(html);
+    const parsed = parseMercadoLivreHtml(html, debug);
     if (!parsed.title && !parsed.heroImage && !parsed.price) return null;
     return withMethod(
       {
@@ -525,15 +640,35 @@ async function fetchHtmlFallback(url, inputInfo) {
     );
   } catch (error) {
     console.log(`[ML HTML] falha ao buscar ${url}: ${error.message}`);
+    recordAttempt(debug, {
+      method: "GET",
+      url,
+      layer: "html",
+      status: 0,
+      ok: false,
+      details: error.message
+    });
     return null;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function parseMercadoLivreHtml(html) {
+function parseMercadoLivreHtml(html, debug = null) {
   const jsonLd = extractJsonLdData(html);
   const scriptData = extractStructuredScriptData(html);
+  const metaProductPrice = getMetaContent(html, "property", "product:price:amount");
+  const metaItempropPrice = getMetaContent(html, "itemprop", "price");
+  const twitterPrice = getMetaContent(html, "name", "twitter:data1");
+  const visiblePrices = extractVisibleHtmlPrices(html);
+  [
+    ["json-ld offers.price", jsonLd.price],
+    ["meta product:price:amount", metaProductPrice],
+    ["meta itemprop=price", metaItempropPrice],
+    ["twitter:data1", twitterPrice],
+    ["scripts price/amount", scriptData.price],
+    ...visiblePrices.map((value, index) => [`html visible price ${index + 1}`, value])
+  ].forEach(([source, value]) => recordPriceCandidate(debug, { source, value }));
   const title = cleanTitle(
     getMetaContent(html, "property", "og:title") ||
     getMetaContent(html, "name", "twitter:title") ||
@@ -548,12 +683,13 @@ function parseMercadoLivreHtml(html) {
     scriptData.description ||
     ""
   );
-  const price = firstNumber([
+  const price = firstReasonablePrice([
     jsonLd.price,
-    getMetaContent(html, "property", "product:price:amount"),
-    getMetaContent(html, "name", "twitter:data1"),
+    metaProductPrice,
+    metaItempropPrice,
+    twitterPrice,
     scriptData.price,
-    extractVisibleHtmlPrice(html)
+    ...visiblePrices
   ]);
   const images = [
     getMetaContent(html, "property", "og:image"),
@@ -677,13 +813,37 @@ function parseLooseJson(value) {
   }
 }
 
+function firstReasonablePrice(values) {
+  for (const value of values) {
+    const number = normalizePriceCandidate(value);
+    if (number !== null) return number;
+  }
+  return null;
+}
+
+function normalizePriceCandidate(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const text = String(value).trim();
+  const normalizedText = text.includes(",") ? text.replace(/\./g, "").replace(",", ".") : text;
+  const number = Number(normalizedText.replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(number) || number < 1 || number > 50000) return null;
+  return number;
+}
+
 function extractScriptPriceCandidates(text) {
   const values = [];
   const patterns = [
     /"price"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
     /"amount"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
+    /"value"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
     /"priceAmount"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
-    /"current_price"\s*:\s*\{\s*"amount"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi
+    /"itemPrice"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
+    /"formatted_amount"\s*:\s*"R\$\s*([0-9.]+,[0-9]{2})"/gi,
+    /"current_price"\s*:\s*\{\s*"amount"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
+    /"sale_price"\s*:\s*\{\s*"amount"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
+    /"price_tag"[\s\S]{0,240}?"amount"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
+    /"buyBox"[\s\S]{0,500}?"price"[\s\S]{0,160}?"amount"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
+    /"offers"[\s\S]{0,500}?"price"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi
   ];
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) values.push(match[1]);
@@ -735,11 +895,24 @@ function normalizeHtmlImages(images) {
   return [];
 }
 
-function extractVisibleHtmlPrice(html) {
+function extractVisibleHtmlPrices(html) {
   const normalized = html.replace(/\s+/g, " ");
-  const match = normalized.match(/R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})|[0-9]+(?:,[0-9]{2})?)/);
-  if (!match) return null;
-  return Number(match[1].replace(/\./g, "").replace(",", "."));
+  const candidates = [];
+  const priceFocused = normalized.match(/(?:data-testid|class|id)=["'][^"']*price[^"']*["'][^>]*>[^<]{0,80}R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})|[0-9]+(?:,[0-9]{2})?)/gi) || [];
+  priceFocused.forEach((snippet) => {
+    const match = snippet.match(/R\$\s*([0-9.]+,[0-9]{2}|[0-9]+)/i);
+    if (match) candidates.push(match[1]);
+  });
+  for (const match of normalized.matchAll(/(?<!x\s)R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})|[0-9]+(?:,[0-9]{2})?)/gi)) {
+    const before = normalized.slice(Math.max(0, match.index - 30), match.index).toLowerCase();
+    const after = normalized.slice(match.index, match.index + 90).toLowerCase();
+    if (/frete|envio|desconto|off|%/.test(before + after)) continue;
+    if (/\d+\s*x\s*$/i.test(before)) continue;
+    candidates.push(match[1]);
+  }
+  return candidates
+    .map((value) => Number(String(value).replace(/\./g, "").replace(",", ".")))
+    .filter((value, index, list) => normalizePriceCandidate(value) !== null && list.indexOf(value) === index);
 }
 
 function cleanTitle(value) {
@@ -764,12 +937,14 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function fetchSearchFallback(query, headers, inputInfo) {
+async function fetchSearchFallback(query, headers, inputInfo, debug = null, method = "Fallback search") {
   const searchText = buildSearchQuery(query, inputInfo);
   if (!searchText) return null;
-  const result = await fetchMeliResourceSafe(`sites/MLB/search?q=${encodeURIComponent(searchText)}`, headers);
+  const result = await fetchMeliResourceSafe(`sites/MLB/search?q=${encodeURIComponent(searchText)}`, headers, debug);
   if (!result.ok) return null;
-  const offer = extractOffers(result.data).map((item) => normalizeOffer(item, "search_fallback")).filter(isValidOffer)[0] || extractOffers(result.data)[0];
+  const offers = extractOffers(result.data).map((item) => normalizeOffer(item, "search_fallback")).filter(Boolean);
+  offers.forEach((offer) => recordPriceCandidate(debug, { source: `${method}: ${searchText} / ${offer.title || offer.item_id || offer.id}`, value: offer.price }));
+  const offer = chooseBestSearchOffer(offers, searchText) || offers.find(isValidOffer) || offers[0];
   if (!offer) return null;
   return withMethod(
     {
@@ -791,11 +966,102 @@ async function fetchSearchFallback(query, headers, inputInfo) {
       seller: offer.seller || null,
       fetchedAt: new Date().toISOString(),
       syncStatus: extractMercadoLivrePrice(offer) ? "synced" : "partial",
-      syncWarnings: ["Dados complementados pela busca do Mercado Livre"]
+      syncWarnings: [`Dados complementados pela busca do Mercado Livre: ${searchText}`]
     },
-    "Fallback search",
+    method,
     inputInfo
   );
+}
+
+async function fetchAggressiveTitleSearchFallback(title, headers, inputInfo, debug = null) {
+  const queries = buildTitleSearchQueries(title);
+  for (const query of queries) {
+    const result = await fetchSearchFallback(query, headers, inputInfo, debug, query === title ? "ml-search-title" : "ml-search-keywords");
+    if (result && result.price) return result;
+    if (result && !needsMoreData(result)) return result;
+  }
+  return null;
+}
+
+async function fetchPublicSearchHtmlFallback(title, inputInfo, debug = null) {
+  const queries = buildTitleSearchQueries(title);
+  for (const query of queries) {
+    const url = `https://lista.mercadolivre.com.br/${encodeURIComponent(query).replace(/%20/g, "-")}`;
+    const htmlData = await fetchHtmlFallback(url, inputInfo, debug);
+    if (!htmlData?.price) continue;
+    return {
+      ...htmlData,
+      syncMethod: query === title ? "html-search-title" : "html-search-keywords",
+      syncWarnings: [`Preço complementado por busca pública Mercado Livre: ${query}`]
+    };
+  }
+  return null;
+}
+
+function chooseBestSearchOffer(offers, searchText) {
+  const validOffers = offers.filter(isValidOffer);
+  if (!validOffers.length) return null;
+  return validOffers
+    .map((offer) => ({ offer, score: titleSimilarity(searchText, offer.title || "") + availabilityScore(offer) }))
+    .sort((a, b) => b.score - a.score || Number(a.offer.price) - Number(b.offer.price))[0]?.offer || null;
+}
+
+function availabilityScore(offer) {
+  if (offer.status === "active") return 0.15;
+  if (Number(offer.available_quantity || 0) > 0) return 0.1;
+  return 0;
+}
+
+function titleSimilarity(a, b) {
+  const aTokens = new Set(tokenizeSearchText(a));
+  const bTokens = new Set(tokenizeSearchText(b));
+  if (!aTokens.size || !bTokens.size) return 0;
+  const intersection = [...aTokens].filter((token) => bTokens.has(token)).length;
+  return intersection / Math.max(aTokens.size, bTokens.size);
+}
+
+function buildTitleSearchQueries(title) {
+  const clean = cleanSearchTitle(title);
+  if (!clean) return [];
+  const tokens = tokenizeSearchText(clean);
+  const brandModel = extractBrandModelTokens(tokens);
+  const hasCadeira = tokens.includes("cadeira") && tokens.includes("rodas");
+  const queries = [
+    title,
+    clean,
+    hasCadeira ? ["cadeira", "rodas", ...brandModel].join(" ") : "",
+    hasCadeira ? ["cadeira", "de", "rodas", ...[...brandModel].reverse()].join(" ") : "",
+    hasCadeira ? ["cadeira", "rodas", "aco", "carbono", "120kg", ...brandModel.filter((token) => !/120/.test(token))].join(" ") : "",
+    [...brandModel, ...tokens.filter((token) => ["cadeira", "rodas"].includes(token))].join(" ")
+  ];
+  return [...new Set(queries.map((query) => query.trim()).filter((query) => query.length >= 4))].slice(0, 8);
+}
+
+function cleanSearchTitle(value) {
+  return removeAccents(String(value || ""))
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(de|da|do|das|dos|em|para|com|ate|até|kg|kilo|manual|dobravel|dobrável|produto|novo|original)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeSearchText(value) {
+  return removeAccents(String(value || ""))
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 1 && !["de", "da", "do", "das", "dos", "em", "para", "com", "ate"].includes(token));
+}
+
+function extractBrandModelTokens(tokens) {
+  const modelTokens = tokens.filter((token) => /[a-z]+\d+|\d+[a-z]+|\d{2,}/i.test(token));
+  const likelyBrand = tokens.filter((token) => ["dellamed", "d100"].includes(token) || token.length >= 6).slice(-2);
+  return [...new Set([...modelTokens, ...likelyBrand])].slice(0, 4);
+}
+
+function removeAccents(value) {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
 function buildSearchQuery(query, inputInfo) {
@@ -999,7 +1265,7 @@ function mapCatalogProductResponse(product, offer = null) {
   };
 }
 
-async function resolveMercadoLivrePrice(meliId, product, headers) {
+async function resolveMercadoLivrePrice(meliId, product, headers, debug = null) {
   const candidates = [];
   const buyBoxWinner = normalizeOffer(product.buy_box_winner, "buy_box_winner");
   if (buyBoxWinner) candidates.push(buyBoxWinner);
@@ -1007,7 +1273,7 @@ async function resolveMercadoLivrePrice(meliId, product, headers) {
   if (buyBoxWinner?.item_id || buyBoxWinner?.id) {
     const itemId = buyBoxWinner.item_id || buyBoxWinner.id;
     try {
-      const itemResult = await fetchMeliResource(`items/${encodeURIComponent(itemId)}`, headers);
+      const itemResult = await fetchMeliResource(`items/${encodeURIComponent(itemId)}`, headers, debug);
       if (itemResult.ok) {
         logRawMercadoLivreJson(`${meliId}/buy_box_item/${itemId}`, itemResult.data);
         const itemOffer = normalizeOffer(itemResult.data, "buy_box_item");
@@ -1018,8 +1284,9 @@ async function resolveMercadoLivrePrice(meliId, product, headers) {
     }
   }
 
-  const catalogOffers = await findCatalogOffers(meliId, headers);
+  const catalogOffers = await findCatalogOffers(meliId, headers, debug);
   candidates.push(...catalogOffers);
+  candidates.forEach((offer) => recordPriceCandidate(debug, { source: `catalog/items ${offer.source || ""} ${offer.item_id || offer.id || ""}`.trim(), value: offer.price }));
 
   const activeOffers = candidates.filter((offer) => isValidOffer(offer));
   if (!activeOffers.length) {
@@ -1034,12 +1301,12 @@ async function resolveMercadoLivrePrice(meliId, product, headers) {
   return bestOffer;
 }
 
-async function findCatalogOffers(meliId, headers) {
+async function findCatalogOffers(meliId, headers, debug = null) {
   const encodedId = encodeURIComponent(meliId);
   console.log(`[ML SYNC] Buscando ofertas em /products/${meliId}/items e /sites/MLB/search`);
   const results = await Promise.allSettled([
-    fetchMeliResource(`products/${encodedId}/items`, headers),
-    fetchMeliResource(`sites/MLB/search?catalog_product_id=${encodedId}`, headers)
+    fetchMeliResource(`products/${encodedId}/items`, headers, debug),
+    fetchMeliResource(`sites/MLB/search?catalog_product_id=${encodedId}`, headers, debug)
   ]);
 
   const offers = results.flatMap((result) => {
@@ -1052,7 +1319,7 @@ async function findCatalogOffers(meliId, headers) {
 
   console.log(`[ML PRICE] detalhando ${offersNeedingDetails.length} ofertas sem preço para ${meliId}`);
   const detailedResults = await Promise.allSettled(
-    offersNeedingDetails.slice(0, 10).map((offer) => fetchMeliResource(`items/${encodeURIComponent(offer.item_id)}`, headers))
+    offersNeedingDetails.slice(0, 10).map((offer) => fetchMeliResource(`items/${encodeURIComponent(offer.item_id)}`, headers, debug))
   );
   const detailedOffers = detailedResults
     .filter((result) => result.status === "fulfilled" && result.value.ok)

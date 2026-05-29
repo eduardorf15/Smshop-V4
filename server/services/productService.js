@@ -390,6 +390,7 @@ async function buildManualProducts() {
         stock: catalog.stock ?? null,
         soldQuantity: catalog.soldQuantity ?? null,
         seller: catalog.seller || null,
+        manualPriceOverride: Boolean(catalog.manualPriceOverride),
         dataSource: catalog.dataSource || "manual",
         syncStatus: catalog.syncStatus || "fallback"
       };
@@ -441,12 +442,13 @@ function mergeProductData(product, mercadoLivreData) {
   ]);
   const mlPrice = Number(rawMercadoLivrePrice);
   const hasMercadoLivrePrice = Number.isFinite(mlPrice) && mlPrice > 0;
-  const price = hasMercadoLivrePrice ? mlPrice : positiveNumberOrNull(product.price);
+  const hasManualPriceOverride = Boolean(product.manualPriceOverride) && positiveNumberOrNull(product.price) !== null;
+  const price = hasManualPriceOverride ? positiveNumberOrNull(product.price) : hasMercadoLivrePrice ? mlPrice : positiveNumberOrNull(product.price);
   const rawMercadoLivreOldPrice = mercadoLivreData.oldPrice;
   const mlOldPrice = Number(rawMercadoLivreOldPrice);
   const oldPrice = Number.isFinite(mlOldPrice) && mlOldPrice > 0 ? mlOldPrice : product.oldPrice;
-  const syncStatus = hasMercadoLivrePrice ? "synced" : mercadoLivreData.syncStatus || "partial";
-  const dataSource = buildMercadoLivreDataSource(mercadoLivreData.type, syncStatus);
+  const syncStatus = hasMercadoLivrePrice || hasManualPriceOverride ? "synced" : mercadoLivreData.syncStatus || "partial";
+  const dataSource = hasManualPriceOverride && !hasMercadoLivrePrice ? "mercadolivre-partial" : buildMercadoLivreDataSource(mercadoLivreData.type, syncStatus);
   const discount = oldPrice && price ? Math.max(0, Math.round(((oldPrice - price) / oldPrice) * 100)) : product.discount;
   const heroImage = mercadoLivreData.heroImage || images[0] || product.heroImage;
   const rating = mercadoLivreData.rating ?? product.rating;
@@ -677,7 +679,9 @@ async function persistSyncedImportedProduct(originalProduct, syncedProduct) {
     ...current,
     name: syncedProduct.name || current.name,
     description: syncedProduct.description || current.description,
-    price: Number.isFinite(Number(syncedProduct.mercadoLivreParsedPrice)) && Number(syncedProduct.mercadoLivreParsedPrice) > 0
+    price: current.manualPriceOverride && positiveNumberOrNull(current.price) !== null
+      ? positiveNumberOrNull(current.price)
+      : Number.isFinite(Number(syncedProduct.mercadoLivreParsedPrice)) && Number(syncedProduct.mercadoLivreParsedPrice) > 0
       ? Number(syncedProduct.mercadoLivreParsedPrice)
       : positiveNumberOrNull(current.price),
     oldPrice: syncedProduct.oldPrice ?? current.oldPrice ?? null,
@@ -701,7 +705,8 @@ async function persistSyncedImportedProduct(originalProduct, syncedProduct) {
     syncWarning: syncedProduct.syncWarning || current.syncWarning || null,
     syncedAt: syncedProduct.syncedAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    affiliateUrl: current.affiliateUrl
+    affiliateUrl: current.affiliateUrl,
+    manualPriceOverride: Boolean(current.manualPriceOverride)
   };
   const nextProducts = [...importedProducts];
   nextProducts[index] = next;
@@ -718,7 +723,7 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
   const hasMercadoLivrePrice = Number.isFinite(Number(mercadoLivreData?.price)) && Number(mercadoLivreData?.price) > 0;
   const hasManualPrice = Number.isFinite(Number(manualPrice)) && Number(manualPrice) > 0;
   const hasImage = Boolean(mercadoLivreData?.heroImage || mercadoLivreData?.images?.length || existingProduct?.heroImage || existingProduct?.images?.length);
-  const syncStatus = hasMercadoLivrePrice && hasImage && !/revisar título/i.test(title) ? "synced" : "partial";
+  const syncStatus = (hasMercadoLivrePrice || hasManualPrice) && hasImage && !/revisar título/i.test(title) ? "synced" : "partial";
   const syncWarnings = buildImportWarnings({ mercadoLivreData, mercadoLivreError, hasMercadoLivrePrice, hasManualPrice, hasImage, title });
 
   return {
@@ -740,7 +745,7 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
     heroImage: mercadoLivreData?.heroImage || mercadoLivreData?.images?.[0] || existingProduct?.heroImage || "/imagens/logo/logo.png",
     tags: [...new Set(tags)],
     affiliateUrl,
-    price: hasMercadoLivrePrice ? Number(mercadoLivreData.price) : hasManualPrice ? Number(manualPrice) : positiveNumberOrNull(existingProduct?.price),
+    price: hasManualPrice ? Number(manualPrice) : hasMercadoLivrePrice ? Number(mercadoLivreData.price) : positiveNumberOrNull(existingProduct?.price),
     oldPrice: mercadoLivreData?.oldPrice ?? existingProduct?.oldPrice ?? null,
     available: Boolean(available ?? mercadoLivreData?.available ?? existingProduct?.available ?? true),
     badge: existingProduct?.badge || "Importado",
@@ -755,11 +760,12 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
     importedFromMercadoLivre: true,
     importedAt: new Date().toISOString(),
     syncedAt: mercadoLivreData?.fetchedAt || new Date().toISOString(),
-    dataSource: syncStatus === "synced" ? buildMercadoLivreDataSource(mercadoLivreData?.type, syncStatus) : "mercadolivre-partial",
+    dataSource: syncStatus === "synced" && hasMercadoLivrePrice ? buildMercadoLivreDataSource(mercadoLivreData?.type, syncStatus) : "mercadolivre-partial",
     syncStatus,
     syncMethod: mercadoLivreData?.syncMethod || (syncStatus === "synced" ? "API OK" : "Manual/revisar"),
     syncWarnings,
-    syncWarning: syncWarnings[0] || null
+    syncWarning: syncWarnings[0] || null,
+    manualPriceOverride: hasManualPrice
   };
 }
 

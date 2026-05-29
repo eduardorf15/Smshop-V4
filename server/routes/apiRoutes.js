@@ -19,7 +19,7 @@ import {
   generateAuthorizationUrl,
   getConnectionStatus
 } from "../services/mercadoLivreAuthService.js";
-import { fetchMercadoLivreItemForTest } from "../services/mercadoLivreService.js";
+import { debugMercadoLivreImport, fetchMercadoLivreItemForTest } from "../services/mercadoLivreService.js";
 
 const router = Router();
 
@@ -99,6 +99,15 @@ router.get("/api/admin/products", async (_req, res, next) => {
   try {
     const products = await getAdminProducts();
     res.json({ ok: true, count: products.length, products });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/api/admin/debug-mercadolivre", async (req, res, next) => {
+  try {
+    const result = await debugMercadoLivreImport(req.query.input || "");
+    res.json({ ok: true, debug: result });
   } catch (error) {
     next(error);
   }

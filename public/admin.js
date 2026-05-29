@@ -197,6 +197,7 @@ async function onActionClick(event) {
   if (action === "refresh") await refreshAll();
   if (action === "sync-all") await syncAll();
   if (action === "focus-import") nodes.importForm.querySelector("input[name='input']")?.focus();
+  if (action === "debug-ml") await debugMercadoLivre();
   if (action === "edit") openEditor(findProduct(id));
   if (action === "sync") await syncProduct(id);
   if (action === "delete") await deleteProduct(id);
@@ -244,6 +245,34 @@ async function deleteProduct(id) {
   } catch (error) {
     setMessage(error.message, "error");
   }
+}
+
+async function debugMercadoLivre() {
+  const input = nodes.importForm.elements.input?.value?.trim();
+  if (!input) {
+    setMessage("Informe um link ou MLB ID para depurar.", "error");
+    return;
+  }
+  setMessage("Executando debug Mercado Livre...");
+  try {
+    const result = await apiFetch(`/api/admin/debug-mercadolivre?input=${encodeURIComponent(input)}`);
+    const debug = result.debug || {};
+    const accepted = (debug.priceCandidates || []).filter((candidate) => candidate.accepted);
+    const rejected = (debug.priceCandidates || []).filter((candidate) => !candidate.accepted);
+    console.log("[SMShop Debug ML]", debug);
+    setMessage(
+      `Debug ML: ${debug.title || debug.meliId || input}. Preço escolhido: ${formatPrice(debug.chosenPrice)}. Candidatos válidos: ${accepted.length}. Rejeitados: ${rejected.length}. ${debug.reason || ""}`,
+      debug.chosenPrice ? "ok" : "error"
+    );
+  } catch (error) {
+    setMessage(error.message, "error");
+  }
+}
+
+function formatPrice(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "Sem preço";
+  return number.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 function renderDashboard() {
@@ -490,12 +519,6 @@ function numberOrNull(value) {
   if (value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-function formatPrice(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number <= 0) return "Sem preço";
-  return number.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 function hasValidPrice(value) {
