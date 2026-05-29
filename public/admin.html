@@ -90,6 +90,10 @@
               <h2>Cadastrar produto</h2>
             </div>
           </div>
+          <input name="sourceInput" type="hidden" />
+          <input name="meliId" type="hidden" />
+          <input name="assistedMode" type="hidden" />
+          <input name="aiEnhanced" type="hidden" />
           <label>
             Nome
             <input name="name" required />
@@ -142,6 +146,7 @@
             <button type="submit">Cadastrar e publicar</button>
             <button type="button" class="ghost" data-action="ai-description">Gerar descrição com IA</button>
             <button type="button" class="ghost" data-action="ai-tags">Sugerir tags</button>
+            <button type="button" class="ghost" data-action="ai-copy">Gerar texto de venda</button>
             <button type="button" class="ghost" data-action="ai-review">Revisar produto</button>
           </div>
         </form>
@@ -183,6 +188,10 @@
             <select data-filter="status">
               <option value="">Todos status</option>
               <option value="synced">Synced</option>
+              <option value="official-api">Official API</option>
+              <option value="assisted-manual">Assisted manual</option>
+              <option value="ai-enhanced">AI enhanced</option>
+              <option value="api-blocked">API blocked</option>
               <option value="partial">Partial</option>
               <option value="fallback">Fallback</option>
               <option value="error">Error</option>

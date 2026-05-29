@@ -562,7 +562,6 @@ async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
   const debug = options.debug || null;
   const headers = await buildHeaders();
   const warnings = [];
-  const candidates = buildPublicUrlCandidates(normalizedInput);
   let apiData = null;
   let apiError = "";
 
@@ -580,7 +579,6 @@ async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
         normalizedInput
       );
       recordDataCandidates(debug, apiData, `/items/${itemId}`);
-      candidates.push(apiData.permalink);
       if (itemResult.data?.catalog_product_id) normalizedInput.productId = itemResult.data.catalog_product_id;
     } else {
       apiError = itemResult.details || `HTTP ${itemResult.status}`;
@@ -596,21 +594,12 @@ async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
       const catalogData = withMethod(normalizeMeliCatalogProduct(productId, productResult.data, resolvedPrice), "API OK", normalizedInput);
       recordDataCandidates(debug, catalogData, `/products/${productId}`);
       apiData = mergeMercadoLivrePayload(apiData, catalogData);
-      candidates.push(apiData.permalink, resolvedPrice?.permalink);
     } else {
       warnings.push(`/products/${productId}: ${productResult.details || `HTTP ${productResult.status}`}`);
     }
   }
 
-  candidates.push(normalizedInput.resolvedUrl, normalizedInput.sourceInput);
   let mergedData = apiData;
-  if (needsMoreData(mergedData)) {
-    const htmlData = await fetchBestHtmlFallback(candidates, normalizedInput, debug);
-    if (htmlData) {
-      recordDataCandidates(debug, htmlData, "HTML fallback");
-      mergedData = mergeMercadoLivrePayload(mergedData, htmlData);
-    }
-  }
 
   if (needsMoreData(mergedData)) {
     const searchData = await fetchSearchFallback(mergedData?.title || normalizedInput.meliId || normalizedInput.sourceInput, headers, normalizedInput, debug);
@@ -625,14 +614,6 @@ async function fetchHybridMercadoLivreData(inputInfo, options = {}) {
     if (titleSearchData) {
       recordDataCandidates(debug, titleSearchData, "Title search fallback");
       mergedData = mergeMercadoLivrePayload(mergedData, titleSearchData);
-    }
-  }
-
-  if (needsMoreData(mergedData)) {
-    const publicSearchData = await fetchPublicSearchHtmlFallback(mergedData?.title || "", normalizedInput, debug);
-    if (publicSearchData) {
-      recordDataCandidates(debug, publicSearchData, "Public search HTML fallback");
-      mergedData = mergeMercadoLivrePayload(mergedData, publicSearchData);
     }
   }
 
@@ -822,15 +803,6 @@ function meaningfulText(value) {
   return text;
 }
 
-function buildPublicUrlCandidates(inputInfo) {
-  const urls = [inputInfo.resolvedUrl, inputInfo.sourceInput].filter(Boolean);
-  const itemId = inputInfo.itemId || (detectMercadoLivreIdKind(inputInfo.meliId) === "item" ? inputInfo.meliId : null);
-  const productId = inputInfo.productId || (detectMercadoLivreIdKind(inputInfo.meliId) === "catalog_product" ? inputInfo.meliId : null);
-  if (itemId) urls.push(`https://produto.mercadolivre.com.br/${itemId.replace(/^MLB/i, "MLB-")}`);
-  if (productId) urls.push(`https://www.mercadolivre.com.br/p/${productId}`);
-  return [...new Set(urls)];
-}
-
 function createDebugTrace(input, normalizedInput) {
   return {
     input: String(input || ""),
@@ -891,139 +863,6 @@ function recordDataCandidates(debug, data, source) {
   [data.heroImage, ...(data.images || [])].filter(Boolean).forEach((image, index) => {
     recordImageCandidate(debug, { source: `${source} image ${index + 1}`, value: image });
   });
-}
-
-async function fetchBestHtmlFallback(candidates, inputInfo, debug = null) {
-  const urls = [...new Set((candidates || []).filter((url) => /^https?:\/\//i.test(String(url || ""))))];
-  for (const url of urls) {
-    const data = await fetchHtmlFallback(url, inputInfo, debug);
-    if (data && !needsMoreData(data)) return data;
-    if (data) return data;
-  }
-  return null;
-}
-
-async function fetchHtmlFallback(url, inputInfo, debug = null) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-  try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: "text/html,application/xhtml+xml",
-        "User-Agent": "Mozilla/5.0 SMShopImporter/1.0"
-      },
-      redirect: "follow",
-      signal: controller.signal
-    });
-    const html = await response.text();
-    recordAttempt(debug, {
-      method: "GET",
-      url,
-      finalUrl: response.url || url,
-      layer: "html",
-      status: response.status,
-      ok: response.ok,
-      details: response.ok ? `html ${html.length} bytes` : "html indisponível"
-    });
-    if (!response.ok || !html) return null;
-    const parsed = parseMercadoLivreHtml(html, debug);
-    if (!parsed.title && !parsed.heroImage && !parsed.price) return null;
-    return withMethod(
-      {
-        meliId: inputInfo.meliId,
-        type: inputInfo.meliType || "html",
-        ...parsed,
-        permalink: response.url || url,
-        resolvedUrl: response.url || url,
-        fetchedAt: new Date().toISOString(),
-        syncStatus: parsed.price ? "synced" : "partial",
-        syncWarnings: ["Dados complementados pelo HTML público do Mercado Livre"]
-      },
-      "Fallback HTML",
-      { ...inputInfo, resolvedUrl: response.url || url }
-    );
-  } catch (error) {
-    console.log(`[ML HTML] falha ao buscar ${url}: ${error.message}`);
-    recordAttempt(debug, {
-      method: "GET",
-      url,
-      layer: "html",
-      status: 0,
-      ok: false,
-      details: error.message
-    });
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function parseMercadoLivreHtml(html, debug = null) {
-  const jsonLd = extractJsonLdData(html);
-  const scriptData = extractStructuredScriptData(html);
-  const metaProductPrice = getMetaContent(html, "property", "product:price:amount");
-  const metaItempropPrice = getMetaContent(html, "itemprop", "price");
-  const twitterPrice = getMetaContent(html, "name", "twitter:data1");
-  const visiblePrices = extractVisibleHtmlPrices(html);
-  const rawTitleCandidates = [
-    ["og:title", getMetaContent(html, "property", "og:title")],
-    ["twitter:title", getMetaContent(html, "name", "twitter:title")],
-    ["json-ld name", jsonLd.title],
-    ["scripts title/name", scriptData.title],
-    ["title tag", getTagContent(html, "title")]
-  ];
-  rawTitleCandidates.forEach(([source, value]) => recordTitleCandidate(debug, { source, value: cleanTitle(value) }));
-  [
-    ["json-ld offers.price", jsonLd.price],
-    ["meta product:price:amount", metaProductPrice],
-    ["meta itemprop=price", metaItempropPrice],
-    ["twitter:data1", twitterPrice],
-    ["scripts price/amount", scriptData.price],
-    ...visiblePrices.map((value, index) => [`html visible price ${index + 1}`, value])
-  ].forEach(([source, value]) => recordPriceCandidate(debug, { source, value }));
-  const title = meaningfulText(cleanTitle(
-    getMetaContent(html, "property", "og:title") ||
-    getMetaContent(html, "name", "twitter:title") ||
-    jsonLd.title ||
-    scriptData.title ||
-    getTagContent(html, "title")
-  ));
-  const description = cleanText(
-    getMetaContent(html, "property", "og:description") ||
-    getMetaContent(html, "name", "description") ||
-    jsonLd.description ||
-    scriptData.description ||
-    ""
-  );
-  const price = firstReasonablePrice([
-    jsonLd.price,
-    metaProductPrice,
-    metaItempropPrice,
-    twitterPrice,
-    scriptData.price,
-    ...visiblePrices
-  ]);
-  const images = [
-    ["og:image", getMetaContent(html, "property", "og:image")],
-    ["twitter:image", getMetaContent(html, "name", "twitter:image")],
-    ...normalizeHtmlImages(jsonLd.images).map((image) => ["json-ld image", image]),
-    ...normalizeHtmlImages(scriptData.images).map((image) => ["script image", image])
-  ].filter(([, image]) => isUsefulMercadoLivreImage(image));
-  [
-    ["og:image", getMetaContent(html, "property", "og:image")],
-    ["twitter:image", getMetaContent(html, "name", "twitter:image")],
-    ...normalizeHtmlImages(jsonLd.images).map((image) => ["json-ld image", image]),
-    ...normalizeHtmlImages(scriptData.images).map((image) => ["script image", image])
-  ].forEach(([source, value]) => recordImageCandidate(debug, { source, value }));
-
-  return {
-    title,
-    description,
-    price,
-    currency: getMetaContent(html, "property", "product:price:currency") || jsonLd.currency || scriptData.currency || "BRL",
-    heroImage: images[0]?.[1] || null,
-    images: [...new Set(images.map((image) => image[1]))]
-  };
 }
 
 function getMetaContent(html, attr, name) {
@@ -1304,21 +1143,6 @@ async function fetchAggressiveTitleSearchFallback(title, headers, inputInfo, deb
     const result = await fetchSearchFallback(query, headers, inputInfo, debug, query === title ? "ml-search-title" : "ml-search-keywords");
     if (result && result.price) return result;
     if (result && !needsMoreData(result)) return result;
-  }
-  return null;
-}
-
-async function fetchPublicSearchHtmlFallback(title, inputInfo, debug = null) {
-  const queries = buildTitleSearchQueries(title);
-  for (const query of queries) {
-    const url = `https://lista.mercadolivre.com.br/${encodeURIComponent(query).replace(/%20/g, "-")}`;
-    const htmlData = await fetchHtmlFallback(url, inputInfo, debug);
-    if (!htmlData?.price) continue;
-    return {
-      ...htmlData,
-      syncMethod: query === title ? "html-search-title" : "html-search-keywords",
-      syncWarnings: [`Preço complementado por busca pública Mercado Livre: ${query}`]
-    };
   }
   return null;
 }

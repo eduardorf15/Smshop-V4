@@ -9,7 +9,7 @@ import {
   refreshMercadoLivreCache,
   resolveMercadoLivreIdFromInput
 } from "./mercadoLivreService.js";
-import { normalizeMercadoLivreInput as normalizeMercadoLivreInputV2 } from "./mercadoLivre/normalizeInput.js";
+import { extractMercadoLivreId as extractMercadoLivreIdV2, normalizeMercadoLivreInput as normalizeMercadoLivreInputV2 } from "./mercadoLivre/normalizeInput.js";
 import { fetchMercadoLivreData as fetchMercadoLivreDataV2 } from "./mercadoLivre/fetchMercadoLivreData.js";
 import { buildImportedProduct as buildImportedProductV2 } from "./mercadoLivre/buildImportedProduct.js";
 
@@ -48,7 +48,7 @@ export async function listProducts() {
 }
 
 export async function syncProductsWithMercadoLivre(products, options = {}) {
-  const productsWithMeliId = products.filter((product) => product.meliId);
+  const productsWithMeliId = products.filter((product) => product.meliId && !isAssistedManualProduct(product));
   if (!productsWithMeliId.length) {
     console.log("[ML SYNC] Nenhum produto com meliId detectado; usando catalogo manual.");
     return products;
@@ -76,6 +76,12 @@ export async function syncProductsWithMercadoLivre(products, options = {}) {
     }
     return mergeProductData(product, mercadoLivreData[product.id]);
   });
+}
+
+function isAssistedManualProduct(product) {
+  return Boolean(product.assistedManual || product.aiEnhanced) ||
+    ["assisted-manual", "ai-enhanced"].includes(product.syncStatus) ||
+    ["assisted-manual", "ai-enhanced"].includes(product.dataSource);
 }
 
 export async function getProductById(id) {
@@ -109,6 +115,10 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
   if (!meliId) {
     throw createPublicError("Informe uma URL ou ID válido do Mercado Livre.", 400);
   }
+  if (mercadoLivreData?.apiBlocked || mercadoLivreData?.officialAccessDenied) {
+    console.log("[ML IMPORT BLOCKED]", JSON.stringify({ input, meliId, message: "Mercado Livre bloqueou o acesso automático a este produto. Use cadastro assistido por IA.", officialAccessDenied: true }));
+    throw createPublicError("Mercado Livre bloqueou o acesso automático a este produto. Use cadastro assistido por IA.", 422);
+  }
   const existingProducts = await buildManualProducts();
   const existingProduct = existingProducts.find((product) => product.meliId === meliId);
 
@@ -133,10 +143,10 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
     fallbackTriggers: importedProduct.dataQuality?.fallbackTriggers || []
   };
   const fallbackTriggers = importedProduct.dataQuality?.fallbackTriggers || [];
-  if (fallbackTriggers.includes("title") && fallbackTriggers.includes("image") && fallbackTriggers.includes("price")) {
+  if (fallbackTriggers.includes("title") || fallbackTriggers.includes("image") || fallbackTriggers.includes("price")) {
     const message = mercadoLivreData?.officialAccessDenied
       ? "Mercado Livre bloqueou dados automáticos deste produto. Use cadastro manual/IA."
-      : "Não foi possível obter título e imagem reais do Mercado Livre. Use cadastro manual/IA para evitar publicar produto genérico.";
+      : "A API oficial do Mercado Livre não retornou dados completos deste produto. Use cadastro assistido por IA.";
     console.log("[ML IMPORT BLOCKED]", JSON.stringify({ input, meliId, message, fallbackTriggers, officialAccessDenied: Boolean(mercadoLivreData?.officialAccessDenied) }));
     throw createPublicError(message, 422);
   }
@@ -169,6 +179,10 @@ export async function getAdminProducts() {
 }
 
 export async function createManualProduct(payload = {}) {
+  const sourceInput = String(payload.sourceInput || "").trim();
+  const meliId = String(payload.meliId || extractMercadoLivreIdV2(sourceInput) || "").trim() || null;
+  const assistedManual = Boolean(payload.assistedMode || sourceInput || meliId);
+  const aiEnhanced = Boolean(payload.aiEnhanced);
   const updates = validateManualProductUpdates({
     ...payload,
     affiliateUrl: payload.affiliateUrl,
@@ -182,23 +196,36 @@ export async function createManualProduct(payload = {}) {
   const name = String(payload.name || "").trim();
   if (!name) throw createPublicError("Nome do produto é obrigatório.", 400);
   if (!updates.affiliateUrl) throw createPublicError("affiliateUrl é obrigatório.", 400);
+  const images = normalizeImageList(payload.images).filter(usefulImage);
+  if (!images.length) {
+    throw createPublicError("Imagem real do produto é obrigatória para publicar. Informe a URL da imagem manualmente.", 400);
+  }
 
   const importedProducts = await readImportedProducts();
-  const id = uniqueImportedId(importedProducts, payload.id || slugify(name));
+  const id = uniqueImportedId(importedProducts, payload.id || (meliId ? `meli-${meliId.toLowerCase()}` : slugify(name)));
   const category = updates.category || "Tecnologia";
+  const syncStatus = aiEnhanced ? "ai-enhanced" : assistedManual ? "assisted-manual" : "manual";
   const product = {
     id,
     sku: id,
+    meliId,
     name,
     description: String(payload.description || name).trim(),
     productType: String(payload.productType || category).trim(),
     productTypeSlug: slugify(payload.productType || category),
-    images: normalizeImageList(payload.images),
-    heroImage: normalizeImageList(payload.images)[0] || "/imagens/logo/logo.png",
+    images,
+    heroImage: images[0],
     badge: String(payload.badge || "Curadoria").trim(),
     onOffer: Boolean(payload.onOffer),
     importedManual: true,
+    assistedManual,
+    aiEnhanced,
     importedAt: new Date().toISOString(),
+    sourceInput: sourceInput || null,
+    mercadoLivrePermalink: sourceInput || null,
+    syncStatus,
+    syncMethod: syncStatus,
+    dataSource: syncStatus,
     ...updates
   };
 
@@ -276,6 +303,9 @@ export async function syncAdminProduct(id) {
   const product = products.find((item) => item.id === id || item.sku === id);
   if (!product) throw createPublicError("Produto não encontrado.", 404);
   if (!product.meliId) throw createPublicError("Produto sem meliId para sincronizar.", 400);
+  if (isAssistedManualProduct(product)) {
+    throw createPublicError("Produto cadastrado por IA/manual não é sincronizado automaticamente com Mercado Livre.", 400);
+  }
 
   const [syncedProduct] = await syncProductsWithMercadoLivre([product], { force: true });
   await persistSyncedImportedProduct(product, syncedProduct);
@@ -285,7 +315,7 @@ export async function syncAdminProduct(id) {
 
 export async function forceRefreshMercadoLivreProducts() {
   const products = await buildManualProducts();
-  const productsWithMeliId = products.filter((product) => product.meliId);
+  const productsWithMeliId = products.filter((product) => product.meliId && !isAssistedManualProduct(product));
   const result = await refreshMercadoLivreCache(productsWithMeliId);
   cache = null;
   cacheFetchedAt = 0;
@@ -398,6 +428,8 @@ async function buildManualProducts() {
         tags: [...new Set([...(catalog.categoryTags || []), productTypeSlug, ...(catalog.tags || [])])],
         importedFromMercadoLivre: Boolean(catalog.importedFromMercadoLivre),
         importedManual: Boolean(catalog.importedManual),
+        assistedManual: Boolean(catalog.assistedManual),
+        aiEnhanced: Boolean(catalog.aiEnhanced),
         importedAt: catalog.importedAt || null,
         manualDataUpdatedAt: catalog.manualDataUpdatedAt || null,
         updatedAt: catalog.updatedAt || null,
@@ -916,7 +948,6 @@ function summarizeProductForLog(product) {
 }
 
 function priceSourceMessage(syncMethod) {
-  if (syncMethod === "Fallback HTML") return "Preço puxado do HTML";
   if (syncMethod === "Fallback search") return "Preço puxado da busca";
   if (syncMethod === "API OK" || syncMethod === "API parcial") return "Preço puxado da API";
   return "";
@@ -1008,8 +1039,11 @@ function validateManualProductUpdates(updates) {
     allowed.badge = String(updates.badge || "").trim();
   }
   if (Object.prototype.hasOwnProperty.call(updates, "images")) {
-    allowed.images = normalizeImageList(updates.images);
-    allowed.heroImage = allowed.images[0] || "/imagens/logo/logo.png";
+    allowed.images = normalizeImageList(updates.images).filter(usefulImage);
+    if (!allowed.images.length) {
+      throw createPublicError("Imagem real do produto é obrigatória para publicar.", 400);
+    }
+    allowed.heroImage = allowed.images[0];
   }
 
   return allowed;

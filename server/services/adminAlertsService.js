@@ -22,6 +22,15 @@ export async function getAdminAlerts() {
     if (!isValidPrice(product.price)) {
       alerts.push(buildAlert(product, "missing-price", "Sem preco", "Produto sem preco valido para exibicao."));
     }
+    if (!hasValidImage(product)) {
+      alerts.push(buildAlert(product, "missing-image", "Sem imagem", "Produto sem imagem real cadastrada."));
+    }
+    if (!String(product.description || "").trim()) {
+      alerts.push(buildAlert(product, "missing-description", "Sem descricao", "Produto sem descricao publicada."));
+    }
+    if (isApiBlocked(product)) {
+      alerts.push(buildAlert(product, "api-blocked", "API Mercado Livre bloqueada", "Mercado Livre bloqueou o acesso automatico a este produto. Use cadastro assistido por IA."));
+    }
     if (hasOldManualPrice(product)) {
       alerts.push(buildAlert(product, "old-manual-price", "Revisar preco manual", "Preco manual antigo porque a API do Mercado Livre nao confirmou valor recente."));
     }
@@ -54,7 +63,7 @@ function buildAlert(product, type, title, message) {
     affiliateUrl: product.affiliateUrl || null,
     syncStatus: product.syncStatus || "fallback",
     dataSource: product.dataSource || "manual",
-    severity: type === "error" || type === "missing-affiliate" || type === "missing-price" ? "high" : "medium"
+    severity: ["error", "missing-affiliate", "missing-price", "missing-image", "api-blocked"].includes(type) ? "high" : "medium"
   };
 }
 
@@ -84,6 +93,20 @@ function groupAlertsByProduct(alerts) {
 function isValidPrice(value) {
   const price = Number(value);
   return Number.isFinite(price) && price > 0;
+}
+
+function hasValidImage(product) {
+  const images = [product.heroImage, ...(Array.isArray(product.images) ? product.images : [])]
+    .map((image) => String(image || "").trim())
+    .filter(Boolean);
+  return images.some((image) => !/logo\/logo\.png|placeholder|favicon/i.test(image));
+}
+
+function isApiBlocked(product) {
+  return product.syncStatus === "api-blocked" ||
+    product.dataSource === "api-blocked" ||
+    product.syncMethod === "api-blocked" ||
+    /bloqueou|blocked|denied|403/i.test(String(product.syncWarning || ""));
 }
 
 function needsPriceReview(product) {

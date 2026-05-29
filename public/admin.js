@@ -148,6 +148,10 @@ async function onManualCreate(event) {
     images: mergeImages(text(data, "heroImage"), text(data, "images")),
     tags: splitTags(text(data, "tags")),
     badge: text(data, "badge") || "Curadoria",
+    sourceInput: text(data, "sourceInput"),
+    meliId: text(data, "meliId"),
+    assistedMode: text(data, "assistedMode"),
+    aiEnhanced: text(data, "aiEnhanced") === "true",
     featured: data.has("featured"),
     available: data.has("available")
   };
@@ -238,10 +242,15 @@ function createManualFromMercadoLivreLink() {
   const affiliateUrl = importForm.elements.affiliateUrl?.value?.trim() || input;
   const category = importForm.elements.category?.value || defaultCategoryName;
   const tags = importForm.elements.tags?.value?.trim();
+  const meliId = extractMeliId(input);
 
   manualForm.elements.affiliateUrl.value = affiliateUrl;
   manualForm.elements.category.value = category;
   manualForm.elements.tags.value = tags || "mercado livre, curadoria";
+  if (manualForm.elements.sourceInput) manualForm.elements.sourceInput.value = input;
+  if (manualForm.elements.meliId) manualForm.elements.meliId.value = meliId;
+  if (manualForm.elements.assistedMode) manualForm.elements.assistedMode.value = "true";
+  if (manualForm.elements.aiEnhanced) manualForm.elements.aiEnhanced.value = "";
   manualForm.elements.description.value = "";
   manualForm.elements.heroImage.value = "";
   manualForm.elements.images.value = "";
@@ -344,6 +353,7 @@ async function runAiAction(kind, button) {
     state.aiContext = context;
     renderAiResult(state.aiResult, context);
     applyImmediateAiResult(kind, context);
+    markAiEnhanced(context);
     setMessage(context.source === "edit" ? "IA concluiu dentro do modal. Revise os campos e salve quando quiser." : "IA concluiu. Revise o resultado antes de aplicar.", "ok");
   } catch (error) {
     setMessage(error.message, "error");
@@ -394,6 +404,8 @@ function productFromManualForm() {
     description: text(data, "description"),
     images,
     heroImage: images[0] || "",
+    sourceInput: text(data, "sourceInput"),
+    meliId: text(data, "meliId"),
     tags: splitTags(text(data, "tags")),
     badge: text(data, "badge"),
     featured: data.has("featured"),
@@ -430,6 +442,7 @@ function applyAiDescription(options = {}) {
     return;
   }
   form.elements.description.value = description;
+  markAiEnhanced({ form });
   if (!options.silent) setMessage("Descrição aplicada no formulário. Revise e salve quando quiser.", "ok");
 }
 
@@ -450,7 +463,18 @@ function applyAiTags(options = {}) {
     return;
   }
   form.elements.tags.value = [...new Set(tags)].join(", ");
+  markAiEnhanced({ form });
   if (!options.silent) setMessage("Tags aplicadas no formulário. Revise e salve quando quiser.", "ok");
+}
+
+function markAiEnhanced(context = {}) {
+  const form = context.form || getTargetFormForAiApply();
+  if (form?.elements.aiEnhanced) form.elements.aiEnhanced.value = "true";
+}
+
+function extractMeliId(value) {
+  const match = String(value || "").match(/\b(ML[A-Z]{1,2})-?(\d{3,})\b/i);
+  return match ? `${match[1]}${match[2]}`.toUpperCase() : "";
 }
 
 function getTargetFormForAiApply() {

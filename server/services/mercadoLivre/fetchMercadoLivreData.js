@@ -1,5 +1,3 @@
-import * as cheerio from "cheerio";
-import { createHash } from "node:crypto";
 import { getAuthDebugStatus, getValidAccessToken } from "../mercadoLivreAuthService.js";
 import { detectIdKind, normalizeMercadoLivreInput } from "./normalizeInput.js";
 
@@ -27,115 +25,17 @@ export async function fetchMercadoLivreData(input, options = {}) {
   }
 
   if (needsMoreData(merged)) {
-    const html = await fetchBestHtml(normalizedInput, merged, trace);
-    merged = mergePayloads(merged, html);
-  }
-
-  if (needsMoreData(merged)) {
     merged = mergePayloads(merged, await fetchSearchFallback(normalizedInput, merged, auth, trace));
   }
 
   const finalPayload = finalizePayload(merged, normalizedInput);
-  if (trace.auth?.authMode === "oauth" && /html/i.test(finalPayload.source) && trace.attempts.some((attempt) => attempt.layer === "api")) {
-    finalPayload.syncMethod = "hybrid-oauth-html";
-  }
   finalPayload.officialAccessDenied = officialAccessDenied(trace);
-  if (finalPayload.officialAccessDenied && (!finalPayload.title || !finalPayload.images.length)) {
+  finalPayload.apiBlocked = finalPayload.officialAccessDenied;
+  if (finalPayload.officialAccessDenied) {
     finalPayload.blockedReason = "Mercado Livre negou acesso oficial a este recurso.";
   }
   trace.parsedFields = summarizePayload(finalPayload);
   return options.withTrace ? { data: finalPayload, trace } : finalPayload;
-}
-
-export async function parseMercadoLivreHtml(html, sourceUrl = "", trace = null) {
-  const $ = cheerio.load(String(html || ""));
-  const jsonLdObjects = $("script[type='application/ld+json']")
-    .toArray()
-    .flatMap((node) => parseJsonCandidates($(node).contents().text()));
-  const productJson = findProductNode(jsonLdObjects);
-  const scriptText = $("script").toArray().map((node) => $(node).contents().text()).join("\n");
-  const scriptObjects = [
-    ...extractAssignedJson(scriptText, "__PRELOADED_STATE__"),
-    ...extractAssignedJson(scriptText, "_n.ctx.r="),
-    ...extractNextData($)
-  ];
-  const scriptValues = collectScriptValues(scriptObjects, scriptText);
-  const socialPayload = extractSocialPolycardPayload(scriptObjects);
-  if (socialPayload && /\/social\//i.test(sourceUrl)) {
-    recordCandidate(trace, "titleCandidates", candidate("social polycard title", socialPayload.title), Boolean(cleanTitle(socialPayload.title)));
-    socialPayload.images.forEach((image, index) => recordCandidate(trace, "imageCandidates", candidate(`social polycard image ${index + 1}`, image), isValidImage(image)));
-    recordCandidate(trace, "priceCandidates", candidate("social polycard price", socialPayload.price), parsePrice(socialPayload.price) !== null);
-    return {
-      ...socialPayload,
-      permalink: socialPayload.permalink || sourceUrl,
-      source: "html:social-polycard",
-      confidence: confidence(socialPayload)
-    };
-  }
-  const rawTitles = [
-    candidate("og:title", meta($, "property", "og:title")),
-    candidate("twitter:title", meta($, "name", "twitter:title")),
-    candidate("json-ld Product.name", productJson?.name),
-    candidate("script title/name", scriptValues.title),
-    candidate("title", $("title").first().text())
-  ];
-  const rawImages = [
-    candidate("og:image", meta($, "property", "og:image")),
-    candidate("twitter:image", meta($, "name", "twitter:image")),
-    ...normalizeImages(productJson?.image).map((image) => candidate("json-ld Product.image", image)),
-    ...scriptValues.images.map((image) => candidate("script pictures", image))
-  ];
-  const offer = Array.isArray(productJson?.offers) ? productJson.offers[0] : productJson?.offers || {};
-  const rawPrices = [
-    candidate("json-ld offers.price", offer?.price || offer?.lowPrice),
-    candidate("meta product:price:amount", meta($, "property", "product:price:amount")),
-    candidate("meta itemprop=price", $("[itemprop='price']").first().attr("content") || meta($, "itemprop", "price")),
-    candidate("twitter:data1", meta($, "name", "twitter:data1")),
-    candidate("script price", scriptValues.price),
-    ...extractVisiblePrices($).map((price, index) => candidate(`visible price ${index + 1}`, price))
-  ];
-
-  rawTitles.forEach((item) => recordCandidate(trace, "titleCandidates", item, Boolean(cleanTitle(item.value))));
-  rawImages.forEach((item) => recordCandidate(trace, "imageCandidates", item, isValidImage(item.value)));
-  rawPrices.forEach((item) => recordCandidate(trace, "priceCandidates", item, parsePrice(item.value) !== null));
-
-  const title = rawTitles.map((item) => cleanTitle(item.value)).find(Boolean) || "";
-  const images = [...new Set(rawImages.map((item) => absolutizeImage(item.value)).filter(isValidImage))];
-  const description = cleanText(
-    meta($, "property", "og:description") ||
-    meta($, "name", "description") ||
-    productJson?.description ||
-    scriptValues.description ||
-    ""
-  );
-  const price = firstPositive(rawPrices.map((item) => parsePrice(item.value)));
-  const titleCandidate = rawTitles.find((item) => cleanTitle(item.value));
-  const imageCandidate = rawImages.find((item) => isValidImage(item.value));
-  const priceCandidate = rawPrices.find((item) => parsePrice(item.value) !== null);
-
-  const parsed = {
-    title,
-    description,
-    price,
-    oldPrice: null,
-    images,
-    thumbnail: images[0] || null,
-    permalink: sourceUrl || meta($, "property", "og:url") || "",
-    seller: null,
-    attributes: [],
-    source: "html",
-    titleSource: titleCandidate?.source || null,
-    imageSource: imageCandidate?.source || null,
-    priceSource: priceCandidate?.source || null,
-    confidence: confidence({ title, images, price }),
-    htmlExtraction: {
-      titleCandidates: rawTitles,
-      imageCandidates: rawImages,
-      priceCandidates: rawPrices
-    }
-  };
-  if (trace) trace.htmlExtraction = parsed.htmlExtraction;
-  return parsed;
 }
 
 function createTrace(normalizedInput) {
@@ -185,19 +85,6 @@ async function fetchCatalogItems(catalogId, auth, trace) {
   const best = offers.filter((offer) => offer.price).sort((a, b) => Number(a.price) - Number(b.price))[0] || offers[0] || null;
   recordPayloadCandidates(trace, best, `api/catalog-items/${catalogId}`);
   return best ? { ...best, source: "catalog/items", confidence: confidence(best) } : null;
-}
-
-async function fetchBestHtml(normalizedInput, current, trace) {
-  const candidates = buildHtmlCandidates(normalizedInput, current);
-  for (const url of candidates) {
-    const html = await fetchHtml(url, trace);
-    if (!html) continue;
-    const parsed = await parseMercadoLivreHtml(html.body, html.url, trace);
-    recordPayloadCandidates(trace, parsed, `html/${url}`);
-    if (!needsMoreData(parsed)) return parsed;
-    if (parsed.title || parsed.images.length || parsed.price) return parsed;
-  }
-  return null;
 }
 
 async function fetchSearchFallback(normalizedInput, current, auth, trace) {
@@ -332,119 +219,7 @@ function sanitizeApiUrl(url) {
 
 function officialAccessDenied(trace) {
   const apiAttempts = (trace?.attempts || []).filter((attempt) => attempt.layer === "api");
-  return apiAttempts.length > 0 && apiAttempts.every((attempt) => attempt.status === 403);
-}
-
-async function fetchHtml(url, trace) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-  try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: "text/html,application/xhtml+xml",
-        "User-Agent": "Mozilla/5.0 SMShopImporter/2.0"
-      },
-      redirect: "follow",
-      signal: controller.signal
-    });
-    const body = await response.text().catch(() => "");
-    recordAttempt(trace, { layer: "html", method: "GET", url, finalUrl: response.url, status: response.status, ok: response.ok, details: response.ok ? `${body.length} bytes` : "html indisponivel" });
-    const challenge = buildChallengeCookie(response, body);
-    if (response.ok && challenge) {
-      const challenged = await fetchHtmlWithCookie(response.url || url, challenge, trace);
-      if (challenged && !isEmptyMicroLanding(challenged.body)) return challenged;
-    }
-    if (response.ok && body && !isAccountVerificationPage(body, response.url || url)) return { body, url: response.url || url };
-    if (response.ok && isAccountVerificationPage(body, response.url || url)) {
-      recordAttempt(trace, { layer: "html", method: "GET", url, finalUrl: response.url, status: response.status, ok: false, details: "HTML ignorado: pagina de verificacao de conta Mercado Livre" });
-    }
-    return null;
-  } catch (error) {
-    recordAttempt(trace, { layer: "html", method: "GET", url, status: 0, ok: false, details: error.message });
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function isEmptyMicroLanding(body) {
-  const text = String(body || "");
-  return /micro-landing/i.test(text) && /data:image\/gif/i.test(text) && !/mlstatic\.com/i.test(text);
-}
-
-function isAccountVerificationPage(body, url = "") {
-  const text = String(body || "");
-  return /\/gz\/account-verification|account-verification/i.test(String(url || "")) || /gz\/account-verification/i.test(text);
-}
-
-async function fetchHtmlWithCookie(url, cookie, trace) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-  try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: "text/html,application/xhtml+xml",
-        Cookie: cookie,
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
-      },
-      redirect: "follow",
-      signal: controller.signal
-    });
-    const body = await response.text().catch(() => "");
-    recordAttempt(trace, { layer: "html", method: "GET", url, finalUrl: response.url, status: response.status, ok: response.ok, details: response.ok ? `challenge ${body.length} bytes` : "challenge html indisponivel" });
-    if (response.ok && body && !isAccountVerificationPage(body, response.url || url)) return { body, url: response.url || url };
-    if (response.ok && isAccountVerificationPage(body, response.url || url)) {
-      recordAttempt(trace, { layer: "html", method: "GET", url, finalUrl: response.url, status: response.status, ok: false, details: "HTML challenge ignorado: pagina de verificacao de conta Mercado Livre" });
-    }
-    return null;
-  } catch (error) {
-    recordAttempt(trace, { layer: "html", method: "GET", url, status: 0, ok: false, details: `challenge ${error.message}` });
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function buildChallengeCookie(response, body) {
-  if (!/micro-landing|_bmstate|_bmc/i.test(String(body || ""))) return "";
-  const setCookies = typeof response.headers.getSetCookie === "function"
-    ? response.headers.getSetCookie()
-    : [response.headers.get("set-cookie")].filter(Boolean);
-  const bmState = extractCookieValue(setCookies, "_bmstate");
-  if (!bmState) return "";
-  const decoded = decodeURIComponent(bmState);
-  const [seed, difficulty] = decoded.split(";");
-  if (!seed) return "";
-  const nonce = solveChallenge(seed, Number(difficulty || 0));
-  const baseCookies = [
-    `_bmstate=${bmState}`,
-    `_bmc=${encodeURIComponent(`${seed};${nonce}`)}`,
-    "_bm_skipml=true"
-  ];
-  const d2id = extractCookieValue(setCookies, "_d2id");
-  const csrf = extractCookieValue(setCookies, "_csrf");
-  if (d2id) baseCookies.push(`_d2id=${d2id}`);
-  if (csrf) baseCookies.push(`_csrf=${csrf}`);
-  return baseCookies.join("; ");
-}
-
-function extractCookieValue(setCookies, name) {
-  const prefix = `${name}=`;
-  for (const header of setCookies || []) {
-    const part = String(header || "").split(/,(?=\s*[_a-zA-Z0-9-]+=)/).find((cookie) => cookie.trim().startsWith(prefix));
-    if (part) return part.trim().slice(prefix.length).split(";")[0];
-  }
-  return "";
-}
-
-function solveChallenge(seed, difficulty) {
-  if (!difficulty) return 0;
-  const prefix = "0".repeat(Math.min(Number(difficulty) || 0, 5));
-  for (let index = 0; index < 2000000; index += 1) {
-    const hash = createHash("sha256").update(`${seed}${index}`).digest("hex");
-    if (hash.startsWith(prefix)) return index;
-  }
-  return 0;
+  return apiAttempts.some((attempt) => attempt.status === 403);
 }
 
 function fromApiItem(item, descriptionData = null, picturesData = null) {
@@ -581,7 +356,7 @@ function finalizePayload(payload, normalizedInput) {
   normalized.resolvedUrl = normalizedInput.resolvedUrl || normalized.permalink || null;
   normalized.sourceInput = normalizedInput.originalInput;
   normalized.syncStatus = normalized.title && normalized.images.length && normalized.price ? "synced" : "partial";
-  normalized.syncMethod = /api:/i.test(normalized.source) && /html/i.test(normalized.source) ? "hybrid-oauth-html" : normalized.source || "pipeline";
+  normalized.syncMethod = normalized.source && normalized.source !== "none" ? "official-api" : "api-blocked";
   return normalized;
 }
 
@@ -618,13 +393,6 @@ function needsMoreData(payload) {
 
 function emptyPayload(source) {
   return { source, title: "", description: "", price: null, oldPrice: null, images: [], thumbnail: null, permalink: null, seller: null, attributes: [], confidence: 0 };
-}
-
-function buildHtmlCandidates(input, current) {
-  const urls = [input.resolvedUrl, current.permalink, input.cleanedInput, input.originalInput];
-  if (input.itemId) urls.push(`https://produto.mercadolivre.com.br/${input.itemId.replace(/^MLB/i, "MLB-")}`);
-  if (input.catalogId) urls.push(`https://www.mercadolivre.com.br/p/${input.catalogId}`);
-  return [...new Set(urls.filter((url) => /^https?:\/\//i.test(String(url || ""))))];
 }
 
 function buildSearchQuery(input, current) {

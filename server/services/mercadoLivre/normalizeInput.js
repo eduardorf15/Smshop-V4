@@ -28,58 +28,9 @@ export async function normalizeMercadoLivreInput(input) {
   }
 
   mergeIds(normalized, extractMercadoLivreIds(cleanedInput));
-  if (!normalized.itemId && !normalized.catalogId && normalized.resolvedUrl && isHttpUrl(normalized.resolvedUrl)) {
-    const htmlIds = await extractIdsFromRemoteHtml(normalized.resolvedUrl);
-    normalized.warnings.push(...htmlIds.warnings);
-    mergeIds(normalized, htmlIds);
-  }
   if (!normalized.slug && normalized.resolvedUrl) normalized.slug = extractSlug(normalized.resolvedUrl);
   finalize(normalized);
   return normalized;
-}
-
-async function extractIdsFromRemoteHtml(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-  try {
-    const response = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 SMShopImporter/2.0" },
-      redirect: "follow",
-      signal: controller.signal
-    });
-    const html = await response.text().catch(() => "");
-    if (/\/social\//i.test(response.url || url)) {
-      return { itemId: null, catalogId: null, candidateIds: [], warnings: response.ok ? [] : [`HTML de resolução HTTP ${response.status}`] };
-    }
-    const ids = extractExplicitIdsFromHtml(`${response.url || ""}\n${html}`);
-    return { ...ids, warnings: response.ok ? [] : [`HTML de resolução HTTP ${response.status}`] };
-  } catch (error) {
-    return { itemId: null, catalogId: null, candidateIds: [], warnings: [`HTML de resolução falhou: ${error.message}`] };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function extractExplicitIdsFromHtml(html) {
-  const text = String(html || "");
-  const itemMatches = [
-    ...text.matchAll(/(?:item_id|wid|items-core)[:=/\\%]+(MLB-?\d{6,})/gi),
-    ...text.matchAll(/produto\.mercadolivre\.com\.br\\?\/(MLB)-?(\d{6,})/gi),
-    ...text.matchAll(/\/(MLB)-(\d{6,})/gi)
-  ].map((match) => normalizeMeliId(match[2] ? `${match[1]}${match[2]}` : match[1]));
-  const catalogMatches = [
-    ...text.matchAll(/(?:catalog_product_id|product_id)["'\s:=\\%]+(MLB-?\d{3,})/gi),
-    ...text.matchAll(/\/p\/(MLB-?\d{3,})/gi)
-  ].map((match) => normalizeMeliId(match[1]));
-  const itemId = itemMatches[0] || null;
-  const catalogId = catalogMatches[0] || null;
-  return {
-    itemId,
-    catalogId,
-    detectedType: itemId ? "item" : catalogId ? "catalog" : "unknown",
-    slug: null,
-    candidateIds: [...new Set([itemId, catalogId, ...itemMatches, ...catalogMatches].filter(Boolean))]
-  };
 }
 
 export function extractMercadoLivreId(input) {

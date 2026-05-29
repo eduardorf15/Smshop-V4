@@ -117,9 +117,11 @@ function sanitizeProductPayload(payload = {}) {
       meliType: stringOrNull(product.meliType),
       status: stringOrNull(product.meliStatus || product.status),
       permalink: stringOrNull(product.mercadoLivrePermalink),
+      sourceInput: stringOrNull(product.sourceInput),
       syncMethod: stringOrNull(product.syncMethod),
       syncWarnings: normalizeStringList(product.syncWarnings)
     },
+    affiliateUrl: stringOrNull(product.affiliateUrl),
     affiliateUrlPresent: Boolean(product.affiliateUrl),
     available: product.available !== false
   };
