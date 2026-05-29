@@ -1,8 +1,10 @@
 export function money(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "Consultar preço";
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL"
-  }).format(value);
+  }).format(number);
 }
 
 export function debounce(callback, wait = 220) {

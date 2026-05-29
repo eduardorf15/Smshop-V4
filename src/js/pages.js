@@ -161,7 +161,7 @@ export function renderProductDetail(app, products, id) {
           <span class="eyebrow">${product.badge}</span>
           <h1>${product.name}</h1>
           <p>${product.description}</p>
-          <strong class="product-page-price">${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(product.price)}</strong>
+          <strong class="product-page-price">${formatProductPrice(product.price)}</strong>
           <div class="product-page-actions">
             ${affiliateButton(product, "Comprar agora")}
             <button class="secondary-button" data-favorite-toggle="${product.id}">♡ Favorito</button>
@@ -189,6 +189,12 @@ export function renderProductDetail(app, products, id) {
       </section>
     </section>
   `;
+}
+
+function formatProductPrice(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "Consultar preço";
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(number);
 }
 
 export async function renderOffers(app, products) {

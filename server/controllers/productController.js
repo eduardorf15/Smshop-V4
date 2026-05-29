@@ -37,8 +37,8 @@ export async function getProducts(req, res, next) {
 
     filtered = filtered.map(finalizeMercadoLivreProduct);
 
-    if (sort === "price-asc") filtered.sort((a, b) => a.price - b.price);
-    if (sort === "price-desc") filtered.sort((a, b) => b.price - a.price);
+    if (sort === "price-asc") filtered.sort((a, b) => sortablePrice(a.price, "asc") - sortablePrice(b.price, "asc"));
+    if (sort === "price-desc") filtered.sort((a, b) => sortablePrice(b.price, "desc") - sortablePrice(a.price, "desc"));
     if (sort === "discount") filtered.sort((a, b) => Number(b.onOffer) - Number(a.onOffer));
     if (sort === "rating") filtered.sort((a, b) => b.rating - a.rating);
 
@@ -73,6 +73,12 @@ export async function getProducts(req, res, next) {
   } catch (error) {
     next(error);
   }
+}
+
+function sortablePrice(value, direction) {
+  const number = Number(value);
+  if (Number.isFinite(number) && number > 0) return number;
+  return direction === "asc" ? Number.MAX_SAFE_INTEGER : 0;
 }
 
 export async function getProduct(req, res, next) {

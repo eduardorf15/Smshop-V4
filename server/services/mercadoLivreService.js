@@ -533,35 +533,40 @@ async function fetchHtmlFallback(url, inputInfo) {
 
 function parseMercadoLivreHtml(html) {
   const jsonLd = extractJsonLdData(html);
+  const scriptData = extractStructuredScriptData(html);
   const title = cleanTitle(
     getMetaContent(html, "property", "og:title") ||
     getMetaContent(html, "name", "twitter:title") ||
     jsonLd.title ||
+    scriptData.title ||
     getTagContent(html, "title")
   );
   const description = cleanText(
     getMetaContent(html, "property", "og:description") ||
     getMetaContent(html, "name", "description") ||
     jsonLd.description ||
+    scriptData.description ||
     ""
   );
   const price = firstNumber([
     jsonLd.price,
     getMetaContent(html, "property", "product:price:amount"),
     getMetaContent(html, "name", "twitter:data1"),
+    scriptData.price,
     extractVisibleHtmlPrice(html)
   ]);
   const images = [
     getMetaContent(html, "property", "og:image"),
     getMetaContent(html, "name", "twitter:image"),
-    ...normalizeHtmlImages(jsonLd.images)
+    ...normalizeHtmlImages(jsonLd.images),
+    ...normalizeHtmlImages(scriptData.images)
   ].filter(Boolean);
 
   return {
     title,
     description,
     price,
-    currency: getMetaContent(html, "property", "product:price:currency") || jsonLd.currency || "BRL",
+    currency: getMetaContent(html, "property", "product:price:currency") || jsonLd.currency || scriptData.currency || "BRL",
     heroImage: images[0] || null,
     images: [...new Set(images)]
   };
@@ -599,6 +604,127 @@ function extractJsonLdData(html) {
     }
   }
   return {};
+}
+
+function extractStructuredScriptData(html) {
+  const scripts = [...String(html || "").matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => decodeHtml(match[1] || ""));
+  const parsedObjects = [];
+
+  for (const script of scripts) {
+    const preloadedIndex = script.indexOf("__PRELOADED_STATE__");
+    if (preloadedIndex !== -1) {
+      const objectStart = script.indexOf("{", preloadedIndex);
+      const jsonText = extractBalancedObject(script, objectStart);
+      if (jsonText) {
+        const parsed = parseLooseJson(jsonText);
+        if (parsed) parsedObjects.push(parsed);
+      }
+    }
+
+    const nextDataMatch = script.match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+    if (nextDataMatch) {
+      const parsed = parseLooseJson(nextDataMatch[1]);
+      if (parsed) parsedObjects.push(parsed);
+    }
+  }
+
+  const price = firstNumber([
+    ...parsedObjects.map((item) => findMercadoLivrePrice(item)?.value),
+    ...extractScriptPriceCandidates(scripts.join("\n"))
+  ]);
+  const images = [
+    ...parsedObjects.flatMap((item) => findImageValues(item)),
+    ...extractScriptImageCandidates(scripts.join("\n"))
+  ];
+  const title = parsedObjects.map((item) => findStringByKey(item, ["title", "name"])).find(Boolean) || "";
+  const description = parsedObjects.map((item) => findStringByKey(item, ["description", "subtitle"])).find(Boolean) || "";
+  const currency = parsedObjects.map((item) => findStringByKey(item, ["currency_id", "priceCurrency", "currency"])).find(Boolean) || "";
+
+  return { title, description, price, currency, images };
+}
+
+function extractBalancedObject(text, startIndex) {
+  if (startIndex < 0) return "";
+  let depth = 0;
+  let inString = false;
+  let quote = "";
+  let escaped = false;
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) inString = false;
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      inString = true;
+      quote = char;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    if (char === "}") depth -= 1;
+    if (depth === 0) return text.slice(startIndex, index + 1);
+  }
+  return "";
+}
+
+function parseLooseJson(value) {
+  try {
+    return JSON.parse(String(value || "").trim());
+  } catch {
+    return null;
+  }
+}
+
+function extractScriptPriceCandidates(text) {
+  const values = [];
+  const patterns = [
+    /"price"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
+    /"amount"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
+    /"priceAmount"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi,
+    /"current_price"\s*:\s*\{\s*"amount"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/gi
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) values.push(match[1]);
+  }
+  return values;
+}
+
+function extractScriptImageCandidates(text) {
+  const images = [];
+  for (const match of text.matchAll(/https?:\\?\/\\?\/[^"'\\\s]+(?:jpg|jpeg|png|webp)/gi)) {
+    images.push(match[0].replaceAll("\\/", "/"));
+  }
+  return images.filter((image) => /mlstatic\.com/i.test(image));
+}
+
+function findStringByKey(value, keys) {
+  if (!value || typeof value !== "object") return "";
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findStringByKey(item, keys);
+      if (found) return found;
+    }
+    return "";
+  }
+  for (const key of keys) {
+    if (typeof value[key] === "string" && value[key].trim()) return cleanText(value[key]);
+  }
+  for (const child of Object.values(value).slice(0, 80)) {
+    const found = findStringByKey(child, keys);
+    if (found) return found;
+  }
+  return "";
+}
+
+function findImageValues(value) {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.flatMap((item) => findImageValues(item));
+  const direct = ["image", "images", "picture", "pictures", "thumbnail", "secure_thumbnail"]
+    .flatMap((key) => normalizeHtmlImages(value[key]));
+  const nested = Object.values(value).slice(0, 80).flatMap((item) => findImageValues(item));
+  return [...direct, ...nested].filter((image) => /mlstatic\.com/i.test(image));
 }
 
 function normalizeHtmlImages(images) {
@@ -706,7 +832,7 @@ function buildManualReviewFallback(inputInfo, warnings, errorMessage) {
     fetchedAt: new Date().toISOString(),
     syncStatus: "partial",
     syncMethod: "Manual/revisar",
-    syncWarnings: [...warnings, "Título, preço ou imagem não encontrados; revise manualmente"].filter(Boolean),
+    syncWarnings: [...warnings, "preço não encontrado", "preço precisa ser preenchido manualmente", "Título, preço ou imagem não encontrados; revise manualmente"].filter(Boolean),
     syncWarning: errorMessage || "Dados insuficientes no Mercado Livre; revise manualmente",
     errorMessage
   };

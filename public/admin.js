@@ -362,6 +362,7 @@ function productWarnings(product) {
 
 function renderProductWarnings(product) {
   const warnings = productWarnings(product);
+  if (!hasValidPrice(product?.price)) warnings.unshift("preço precisa ser preenchido manualmente");
   return warnings.length
     ? `<p class="sync-note">${escapeHtml(warnings.slice(0, 2).join(" · "))}</p>`
     : "";
@@ -495,6 +496,11 @@ function formatPrice(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return "Sem preço";
   return number.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function hasValidPrice(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0;
 }
 
 function formatDate(value) {

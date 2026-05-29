@@ -441,7 +441,7 @@ function mergeProductData(product, mercadoLivreData) {
   ]);
   const mlPrice = Number(rawMercadoLivrePrice);
   const hasMercadoLivrePrice = Number.isFinite(mlPrice) && mlPrice > 0;
-  const price = hasMercadoLivrePrice ? mlPrice : product.price;
+  const price = hasMercadoLivrePrice ? mlPrice : positiveNumberOrNull(product.price);
   const rawMercadoLivreOldPrice = mercadoLivreData.oldPrice;
   const mlOldPrice = Number(rawMercadoLivreOldPrice);
   const oldPrice = Number.isFinite(mlOldPrice) && mlOldPrice > 0 ? mlOldPrice : product.oldPrice;
@@ -679,7 +679,7 @@ async function persistSyncedImportedProduct(originalProduct, syncedProduct) {
     description: syncedProduct.description || current.description,
     price: Number.isFinite(Number(syncedProduct.mercadoLivreParsedPrice)) && Number(syncedProduct.mercadoLivreParsedPrice) > 0
       ? Number(syncedProduct.mercadoLivreParsedPrice)
-      : current.price,
+      : positiveNumberOrNull(current.price),
     oldPrice: syncedProduct.oldPrice ?? current.oldPrice ?? null,
     images: syncedProduct.images?.length ? syncedProduct.images : current.images || [],
     heroImage: syncedProduct.heroImage || current.heroImage || "/imagens/logo/logo.png",
@@ -740,7 +740,7 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
     heroImage: mercadoLivreData?.heroImage || mercadoLivreData?.images?.[0] || existingProduct?.heroImage || "/imagens/logo/logo.png",
     tags: [...new Set(tags)],
     affiliateUrl,
-    price: hasMercadoLivrePrice ? Number(mercadoLivreData.price) : hasManualPrice ? Number(manualPrice) : existingProduct?.price ?? null,
+    price: hasMercadoLivrePrice ? Number(mercadoLivreData.price) : hasManualPrice ? Number(manualPrice) : positiveNumberOrNull(existingProduct?.price),
     oldPrice: mercadoLivreData?.oldPrice ?? existingProduct?.oldPrice ?? null,
     available: Boolean(available ?? mercadoLivreData?.available ?? existingProduct?.available ?? true),
     badge: existingProduct?.badge || "Importado",
@@ -769,7 +769,8 @@ function buildImportWarnings({ mercadoLivreData, mercadoLivreError, hasMercadoLi
     mercadoLivreError,
     hasMercadoLivrePrice ? priceSourceMessage(mercadoLivreData?.syncMethod) : "",
     !hasMercadoLivrePrice && hasManualPrice ? "Preço manual usado" : "",
-    !hasMercadoLivrePrice && !hasManualPrice ? "Preço não encontrado, revise manualmente" : "",
+    !hasMercadoLivrePrice && !hasManualPrice ? "preço não encontrado" : "",
+    !hasMercadoLivrePrice && !hasManualPrice ? "preço precisa ser preenchido manualmente" : "",
     !hasImage ? "Imagem não encontrada, revise manualmente" : "",
     /revisar título/i.test(title) ? "Título não encontrado, revise manualmente" : ""
   ].filter(Boolean))];
@@ -784,6 +785,11 @@ function priceSourceMessage(syncMethod) {
 
 function isReviewTitle(value) {
   return /Produto Mercado Livre .*revisar título/i.test(String(value || ""));
+}
+
+function positiveNumberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
 }
 
 function buildManualDataOverride(existingProduct, updates) {
