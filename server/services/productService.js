@@ -5,7 +5,7 @@ import { affiliateLinks } from "../../src/data/affiliate-links.js";
 import { productCatalog } from "../../src/data/product-catalog.js";
 import {
   extractMercadoLivreId,
-  fetchMercadoLivreDataById,
+  fetchMercadoLivreDataByInput,
   getMercadoLivreData,
   getMeliId,
   refreshMercadoLivreCache,
@@ -109,7 +109,7 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
   const manualPrice = price === null || price === undefined || price === "" ? null : validateOptionalNumber(price, "price", { allowNull: false });
   const existingProducts = await buildManualProducts();
   const existingProduct = existingProducts.find((product) => product.meliId === meliId);
-  const mercadoLivreData = await fetchMercadoLivreDataById(meliId, { force: true });
+  const mercadoLivreData = await fetchMercadoLivreDataByInput(input, { force: true });
   const usableMercadoLivreData = mercadoLivreData?.syncStatus === "error" ? null : mercadoLivreData;
 
   const importedProducts = await readImportedProducts();
@@ -117,6 +117,7 @@ export async function importMercadoLivreProduct({ input, category = "Tecnologia"
     existingProduct,
     mercadoLivreData: usableMercadoLivreData,
     mercadoLivreError: mercadoLivreData?.syncStatus === "error" ? mercadoLivreData.errorMessage : "",
+    sourceInput: input,
     meliId,
     category: safeCategory,
     affiliateUrl,
@@ -260,6 +261,7 @@ export async function syncAdminProduct(id) {
   if (!product.meliId) throw createPublicError("Produto sem meliId para sincronizar.", 400);
 
   const [syncedProduct] = await syncProductsWithMercadoLivre([product], { force: true });
+  await persistSyncedImportedProduct(product, syncedProduct);
   clearProductMemoryCache();
   return { product: syncedProduct };
 }
@@ -271,6 +273,12 @@ export async function forceRefreshMercadoLivreProducts() {
   cache = null;
   cacheFetchedAt = 0;
   const syncedProducts = await listProducts();
+  await Promise.all(
+    productsWithMeliId.map((product) => {
+      const syncedProduct = syncedProducts.find((item) => item.id === product.id || item.sku === product.sku || item.meliId === product.meliId);
+      return syncedProduct ? persistSyncedImportedProduct(product, syncedProduct) : null;
+    })
+  );
 
   return {
     ...result,
@@ -348,7 +356,13 @@ async function buildManualProducts() {
         productType,
         productTypeSlug,
         meliId,
+        meliType: catalog.meliType || null,
+        itemId: catalog.itemId || null,
+        catalogProductId: catalog.catalogProductId || null,
+        sourceInput: catalog.sourceInput || null,
+        resolvedUrl: catalog.resolvedUrl || null,
         meliUrl: catalog.meliUrl || null,
+        mercadoLivrePermalink: catalog.mercadoLivrePermalink || null,
         description: catalog.description,
         images,
         heroImage: catalog.heroImage || images[0] || "/imagens/logo/logo.png",
@@ -369,6 +383,13 @@ async function buildManualProducts() {
         manualDataUpdatedAt: catalog.manualDataUpdatedAt || null,
         updatedAt: catalog.updatedAt || null,
         syncWarning: catalog.syncWarning || null,
+        syncWarnings: catalog.syncWarnings || [],
+        syncMethod: catalog.syncMethod || null,
+        syncedAt: catalog.syncedAt || null,
+        meliStatus: catalog.meliStatus || null,
+        stock: catalog.stock ?? null,
+        soldQuantity: catalog.soldQuantity ?? null,
+        seller: catalog.seller || null,
         dataSource: catalog.dataSource || "manual",
         syncStatus: catalog.syncStatus || "fallback"
       };
@@ -452,7 +473,7 @@ function mergeProductData(product, mercadoLivreData) {
 
   const mergedProduct = {
     ...product,
-    name: mercadoLivreData.title || product.name,
+    name: isReviewTitle(mercadoLivreData.title) ? product.name : mercadoLivreData.title || product.name,
     price,
     oldPrice,
     discount,
@@ -463,13 +484,19 @@ function mergeProductData(product, mercadoLivreData) {
     reviews,
     meliType: mercadoLivreData.type || null,
     meliStatus: mercadoLivreData.status || null,
+    itemId: mercadoLivreData.itemId || product.itemId || null,
+    catalogProductId: mercadoLivreData.catalogProductId || product.catalogProductId || null,
+    sourceInput: mercadoLivreData.sourceInput || product.sourceInput || null,
+    resolvedUrl: mercadoLivreData.resolvedUrl || product.resolvedUrl || null,
     stock: mercadoLivreData.stock ?? product.stock ?? null,
     soldQuantity: mercadoLivreData.soldQuantity ?? product.soldQuantity ?? null,
     mercadoLivrePermalink: mercadoLivreData.permalink || null,
     seller: mercadoLivreData.seller || product.seller || null,
     syncedAt: mercadoLivreData.fetchedAt,
     dataSource,
-    syncStatus
+    syncStatus,
+    syncMethod: mercadoLivreData.syncMethod || (hasMercadoLivrePrice ? "API OK" : "API parcial"),
+    syncWarnings: mercadoLivreData.syncWarnings || []
   };
 
   if (mercadoLivreData.syncWarning) {
@@ -641,26 +668,74 @@ async function writeImportedProducts(products) {
   await fs.writeFile(importedProductsFile, `${JSON.stringify({ products }, null, 2)}\n`);
 }
 
-function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreError, meliId, category, affiliateUrl, tags, featured, available, manualPrice }) {
+async function persistSyncedImportedProduct(originalProduct, syncedProduct) {
+  const importedProducts = await readImportedProducts();
+  const index = importedProducts.findIndex((product) => product.id === originalProduct.id || product.sku === originalProduct.sku || (originalProduct.meliId && product.meliId === originalProduct.meliId));
+  if (index === -1) return;
+  const current = importedProducts[index];
+  const next = {
+    ...current,
+    name: syncedProduct.name || current.name,
+    description: syncedProduct.description || current.description,
+    price: Number.isFinite(Number(syncedProduct.mercadoLivreParsedPrice)) && Number(syncedProduct.mercadoLivreParsedPrice) > 0
+      ? Number(syncedProduct.mercadoLivreParsedPrice)
+      : current.price,
+    oldPrice: syncedProduct.oldPrice ?? current.oldPrice ?? null,
+    images: syncedProduct.images?.length ? syncedProduct.images : current.images || [],
+    heroImage: syncedProduct.heroImage || current.heroImage || "/imagens/logo/logo.png",
+    available: syncedProduct.available ?? current.available,
+    mercadoLivrePermalink: syncedProduct.mercadoLivrePermalink || current.mercadoLivrePermalink || null,
+    meliType: syncedProduct.meliType || current.meliType || null,
+    meliStatus: syncedProduct.meliStatus || current.meliStatus || null,
+    itemId: syncedProduct.itemId || current.itemId || null,
+    catalogProductId: syncedProduct.catalogProductId || current.catalogProductId || null,
+    sourceInput: syncedProduct.sourceInput || current.sourceInput || null,
+    resolvedUrl: syncedProduct.resolvedUrl || current.resolvedUrl || null,
+    stock: syncedProduct.stock ?? current.stock ?? null,
+    soldQuantity: syncedProduct.soldQuantity ?? current.soldQuantity ?? null,
+    seller: syncedProduct.seller || current.seller || null,
+    dataSource: syncedProduct.dataSource || current.dataSource,
+    syncStatus: syncedProduct.syncStatus || current.syncStatus,
+    syncMethod: syncedProduct.syncMethod || current.syncMethod || null,
+    syncWarnings: syncedProduct.syncWarnings || current.syncWarnings || [],
+    syncWarning: syncedProduct.syncWarning || current.syncWarning || null,
+    syncedAt: syncedProduct.syncedAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    affiliateUrl: current.affiliateUrl
+  };
+  const nextProducts = [...importedProducts];
+  nextProducts[index] = next;
+  await writeImportedProducts(nextProducts);
+}
+
+function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreError, sourceInput, meliId, category, affiliateUrl, tags, featured, available, manualPrice }) {
   const id = existingProduct?.id || `meli-${meliId.toLowerCase()}`;
   const sku = existingProduct?.sku || `meli-${meliId}`;
-  const title = mercadoLivreData?.title || existingProduct?.name || meliId;
+  const mercadoLivreTitle = isReviewTitle(mercadoLivreData?.title) ? "" : mercadoLivreData?.title;
+  const title = mercadoLivreTitle || existingProduct?.name || `Produto Mercado Livre ${meliId} — revisar título`;
   const productType = category || existingProduct?.productType || "Mercado Livre";
   const categorySlug = slugify(category);
   const hasMercadoLivrePrice = Number.isFinite(Number(mercadoLivreData?.price)) && Number(mercadoLivreData?.price) > 0;
   const hasManualPrice = Number.isFinite(Number(manualPrice)) && Number(manualPrice) > 0;
-  const syncStatus = hasMercadoLivrePrice ? "synced" : "partial";
+  const hasImage = Boolean(mercadoLivreData?.heroImage || mercadoLivreData?.images?.length || existingProduct?.heroImage || existingProduct?.images?.length);
+  const syncStatus = hasMercadoLivrePrice && hasImage && !/revisar título/i.test(title) ? "synced" : "partial";
+  const syncWarnings = buildImportWarnings({ mercadoLivreData, mercadoLivreError, hasMercadoLivrePrice, hasManualPrice, hasImage, title });
 
   return {
     id,
     sku,
     name: title,
     meliId,
+    meliType: mercadoLivreData?.type || null,
+    itemId: mercadoLivreData?.itemId || (mercadoLivreData?.type === "item" ? meliId : null),
+    catalogProductId: mercadoLivreData?.catalogProductId || (mercadoLivreData?.type === "catalog_product" ? meliId : null),
+    sourceInput: String(sourceInput || "").trim(),
+    resolvedUrl: mercadoLivreData?.resolvedUrl || null,
     category,
     categorySlug,
     categoryTags: [categorySlug],
     productType,
-    description: existingProduct?.description || title,
+    description: mercadoLivreData?.description || existingProduct?.description || title,
     images: mercadoLivreData?.images || existingProduct?.images || [],
     heroImage: mercadoLivreData?.heroImage || mercadoLivreData?.images?.[0] || existingProduct?.heroImage || "/imagens/logo/logo.png",
     tags: [...new Set(tags)],
@@ -672,13 +747,43 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
     rating: mercadoLivreData?.rating ?? existingProduct?.rating ?? null,
     reviews: mercadoLivreData?.reviews ?? mercadoLivreData?.soldQuantity ?? existingProduct?.reviews ?? null,
     mercadoLivrePermalink: mercadoLivreData?.permalink || existingProduct?.mercadoLivrePermalink || null,
+    meliStatus: mercadoLivreData?.status || null,
+    stock: mercadoLivreData?.stock ?? null,
+    soldQuantity: mercadoLivreData?.soldQuantity ?? null,
+    seller: mercadoLivreData?.seller || null,
     featured: Boolean(featured),
     importedFromMercadoLivre: true,
     importedAt: new Date().toISOString(),
-    dataSource: syncStatus === "synced" ? "mercadolivre" : "mercadolivre-partial",
+    syncedAt: mercadoLivreData?.fetchedAt || new Date().toISOString(),
+    dataSource: syncStatus === "synced" ? buildMercadoLivreDataSource(mercadoLivreData?.type, syncStatus) : "mercadolivre-partial",
     syncStatus,
-    syncWarning: syncStatus === "partial" ? mercadoLivreError || "Preco indisponivel pela API do Mercado Livre; usando preco manual quando informado" : null
+    syncMethod: mercadoLivreData?.syncMethod || (syncStatus === "synced" ? "API OK" : "Manual/revisar"),
+    syncWarnings,
+    syncWarning: syncWarnings[0] || null
   };
+}
+
+function buildImportWarnings({ mercadoLivreData, mercadoLivreError, hasMercadoLivrePrice, hasManualPrice, hasImage, title }) {
+  return [...new Set([
+    ...(mercadoLivreData?.syncWarnings || []),
+    mercadoLivreError,
+    hasMercadoLivrePrice ? priceSourceMessage(mercadoLivreData?.syncMethod) : "",
+    !hasMercadoLivrePrice && hasManualPrice ? "Preço manual usado" : "",
+    !hasMercadoLivrePrice && !hasManualPrice ? "Preço não encontrado, revise manualmente" : "",
+    !hasImage ? "Imagem não encontrada, revise manualmente" : "",
+    /revisar título/i.test(title) ? "Título não encontrado, revise manualmente" : ""
+  ].filter(Boolean))];
+}
+
+function priceSourceMessage(syncMethod) {
+  if (syncMethod === "Fallback HTML") return "Preço puxado do HTML";
+  if (syncMethod === "Fallback search") return "Preço puxado da busca";
+  if (syncMethod === "API OK" || syncMethod === "API parcial") return "Preço puxado da API";
+  return "";
+}
+
+function isReviewTitle(value) {
+  return /Produto Mercado Livre .*revisar título/i.test(String(value || ""));
 }
 
 function buildManualDataOverride(existingProduct, updates) {

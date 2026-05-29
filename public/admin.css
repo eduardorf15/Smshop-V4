@@ -229,6 +229,11 @@ input:focus, select:focus, textarea:focus {
   color: var(--muted);
   font-size: 12px;
 }
+.product-main .sync-note {
+  margin-top: 8px;
+  white-space: normal;
+  color: #ffd166;
+}
 .meta-row, .row-actions {
   display: flex;
   flex-wrap: wrap;

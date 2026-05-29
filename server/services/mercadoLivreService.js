@@ -38,7 +38,8 @@ export async function getMercadoLivreData(products, options = {}) {
 
       try {
         console.log(`[ML SYNC] Chamando API Mercado Livre para ${product.id} (${meliId})`);
-        const data = await fetchMeliItem(meliId);
+        const normalizedInput = await normalizeMercadoLivreInput(product.sourceInput || product.meliUrl || meliId);
+        const data = await fetchHybridMercadoLivreData({ ...normalizedInput, meliId: normalizedInput.meliId || meliId });
         nextCache[meliId] = { fetchedAt: now, data };
         return [product.id, data];
       } catch (error) {
@@ -75,6 +76,13 @@ export async function fetchMercadoLivreDataById(meliId, options = {}) {
   return dataByProductId[normalizedMeliId] || null;
 }
 
+export async function fetchMercadoLivreDataByInput(input, options = {}) {
+  const normalizedInput = await normalizeMercadoLivreInput(input);
+  if (!normalizedInput.meliId) return null;
+  if (!options.force) return fetchMercadoLivreDataById(normalizedInput.meliId, options);
+  return fetchHybridMercadoLivreData(normalizedInput);
+}
+
 export function getMeliId(product) {
   if (product.meliId) return normalizeMeliId(product.meliId);
   if (product.meliUrl) return extractMeliId(product.meliUrl);
@@ -100,27 +108,49 @@ export function extractMercadoLivreId(value) {
 }
 
 export async function resolveMercadoLivreIdFromInput(value) {
-  const directId = extractMercadoLivreId(value);
-  if (directId) return directId;
+  const normalizedInput = await normalizeMercadoLivreInput(value);
+  return normalizedInput.meliId;
+}
 
-  const text = String(value || "").trim();
-  if (!/^https?:\/\/(?:www\.)?meli\.la\//i.test(text)) return null;
+export async function normalizeMercadoLivreInput(value) {
+  const sourceInput = String(value || "").trim();
+  const normalized = {
+    sourceInput,
+    resolvedUrl: null,
+    itemId: null,
+    productId: null,
+    meliId: null,
+    meliType: null,
+    isCatalog: false
+  };
 
-  let currentUrl = text;
+  const direct = extractIdsFromText(sourceInput);
+  Object.assign(normalized, direct);
+  if (normalized.meliId) return normalized;
+
+  if (!/^https?:\/\/(?:www\.)?meli\.la\//i.test(sourceInput)) return normalized;
+
+  let currentUrl = sourceInput;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const response = await fetch(currentUrl, {
-        method: "GET",
+        method: "HEAD",
         redirect: "manual",
         signal: controller.signal
       });
       const location = response.headers.get("location");
-      if (!location) break;
+      if (!location) {
+        const resolvedByBody = await resolveShortUrlFromHtml(currentUrl);
+        if (resolvedByBody.resolvedUrl) normalized.resolvedUrl = resolvedByBody.resolvedUrl;
+        Object.assign(normalized, resolvedByBody.ids);
+        break;
+      }
       currentUrl = new URL(location, currentUrl).toString();
-      const redirectedId = extractMercadoLivreId(currentUrl);
-      if (redirectedId) return redirectedId;
+      normalized.resolvedUrl = currentUrl;
+      Object.assign(normalized, extractIdsFromText(currentUrl));
+      if (normalized.meliId) return normalized;
     } catch (error) {
       console.log(`[ML SYNC] Não foi possível resolver URL curta Mercado Livre: ${error.message}`);
       break;
@@ -129,7 +159,79 @@ export async function resolveMercadoLivreIdFromInput(value) {
     }
   }
 
-  return null;
+  return normalized;
+}
+
+async function resolveShortUrlFromHtml(url) {
+  const empty = { resolvedUrl: null, ids: extractIdsFromText("") };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      headers: { "User-Agent": "Mozilla/5.0 SMShopImporter/1.0" },
+      signal: controller.signal
+    });
+    const html = await response.text().catch(() => "");
+    const resolvedUrl = response.url && response.url !== url ? response.url : null;
+    const candidateUrl = resolvedUrl || getMetaRefreshUrl(html, url) || getCanonicalUrl(html);
+    return {
+      resolvedUrl: candidateUrl,
+      ids: extractIdsFromText(`${candidateUrl || ""} ${html}`)
+    };
+  } catch (error) {
+    console.log(`[ML SYNC] Não foi possível ler HTML da URL curta Mercado Livre: ${error.message}`);
+    return empty;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function getMetaRefreshUrl(html, baseUrl) {
+  const match = String(html || "").match(/<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"']+)["'][^>]*>/i);
+  if (!match) return null;
+  try {
+    return new URL(decodeHtml(match[1].trim()), baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function getCanonicalUrl(html) {
+  const match = String(html || "").match(/<link\s+[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["'][^>]*>/i) ||
+    String(html || "").match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']canonical["'][^>]*>/i);
+  return decodeHtml(match?.[1] || "") || null;
+}
+
+function extractIdsFromText(value) {
+  const text = String(value || "");
+  const result = {
+    itemId: null,
+    productId: null,
+    meliId: null,
+    meliType: null,
+    isCatalog: false
+  };
+
+  const itemQueryMatch = text.match(/[?&](?:wid|item_id)=(ML[A-Z]{1,2}-?\d{6,})\b/i);
+  const catalogMatch = text.match(/\/p\/(ML[A-Z]{1,2}-?\d{6,})\b/i);
+  const itemPathMatch = text.match(/\/(ML[A-Z]{1,2})-?(\d{6,})\b/i);
+  const directMatch = text.match(/\b(ML[A-Z]{1,2})-?(\d{6,})\b/i);
+
+  if (itemQueryMatch) result.itemId = normalizeMeliId(itemQueryMatch[1]);
+  if (catalogMatch) result.productId = normalizeMeliId(catalogMatch[1]);
+  if (!result.itemId && itemPathMatch) result.itemId = normalizeMeliId(`${itemPathMatch[1]}${itemPathMatch[2]}`);
+  if (!result.itemId && !result.productId && directMatch) {
+    const id = normalizeMeliId(`${directMatch[1]}${directMatch[2]}`);
+    if (detectMercadoLivreIdKind(id) === "item") result.itemId = id;
+    else result.productId = id;
+  }
+
+  result.isCatalog = Boolean(result.productId);
+  result.meliType = result.itemId ? "item" : result.productId ? "catalog_product" : null;
+  result.meliId = result.itemId || result.productId || null;
+  return result;
 }
 
 function normalizeMeliId(value) {
@@ -163,6 +265,75 @@ async function fetchMeliItem(meliId) {
   }
 
   throw new Error(itemResult.details || `HTTP ${itemResult.status}`);
+}
+
+async function fetchHybridMercadoLivreData(inputInfo) {
+  const normalizedInput = {
+    ...(inputInfo || {}),
+    meliId: normalizeMeliId(inputInfo?.meliId || inputInfo?.itemId || inputInfo?.productId || "")
+  };
+  const headers = await buildHeaders();
+  const warnings = [];
+  const candidates = [];
+  let apiData = null;
+  let apiError = "";
+
+  if (normalizedInput.itemId || (normalizedInput.meliId && detectMercadoLivreIdKind(normalizedInput.meliId) === "item")) {
+    const itemId = normalizedInput.itemId || normalizedInput.meliId;
+    const itemResult = await fetchMeliResourceSafe(`items/${encodeURIComponent(itemId)}`, headers);
+    if (itemResult.ok) {
+      const descriptionResult = await fetchMeliResourceSafe(`items/${encodeURIComponent(itemId)}/description`, headers);
+      apiData = withMethod(
+        {
+          ...normalizeMeliItem(itemId, itemResult.data),
+          description: descriptionResult.ok ? descriptionResult.data?.plain_text || descriptionResult.data?.text || null : null
+        },
+        "API OK",
+        normalizedInput
+      );
+      candidates.push(apiData.permalink);
+      if (itemResult.data?.catalog_product_id) normalizedInput.productId = itemResult.data.catalog_product_id;
+    } else {
+      apiError = itemResult.details || `HTTP ${itemResult.status}`;
+      warnings.push(`/items/${itemId}: ${apiError}`);
+    }
+  }
+
+  const productId = normalizedInput.productId || (normalizedInput.meliId && detectMercadoLivreIdKind(normalizedInput.meliId) === "catalog_product" ? normalizedInput.meliId : null);
+  if (productId && needsMoreData(apiData)) {
+    const productResult = await fetchMeliResourceSafe(`products/${encodeURIComponent(productId)}`, headers);
+    if (productResult.ok) {
+      const resolvedPrice = await resolveMercadoLivrePrice(productId, productResult.data, headers);
+      const catalogData = withMethod(normalizeMeliCatalogProduct(productId, productResult.data, resolvedPrice), "API OK", normalizedInput);
+      apiData = mergeMercadoLivrePayload(apiData, catalogData);
+      candidates.push(apiData.permalink, resolvedPrice?.permalink);
+    } else {
+      warnings.push(`/products/${productId}: ${productResult.details || `HTTP ${productResult.status}`}`);
+    }
+  }
+
+  candidates.push(normalizedInput.resolvedUrl, normalizedInput.sourceInput);
+  let mergedData = apiData;
+  if (needsMoreData(mergedData)) {
+    const htmlData = await fetchBestHtmlFallback(candidates, normalizedInput);
+    if (htmlData) {
+      mergedData = mergeMercadoLivrePayload(mergedData, htmlData);
+    }
+  }
+
+  if (needsMoreData(mergedData)) {
+    const searchData = await fetchSearchFallback(mergedData?.title || normalizedInput.meliId || normalizedInput.sourceInput, headers, normalizedInput);
+    if (searchData) {
+      mergedData = mergeMercadoLivrePayload(mergedData, searchData);
+    }
+  }
+
+  if (!mergedData) {
+    return buildManualReviewFallback(normalizedInput, warnings, apiError);
+  }
+
+  const finalWarnings = [...warnings, ...(mergedData.syncWarnings || [])];
+  return finalizeHybridData(mergedData, normalizedInput, finalWarnings);
 }
 
 export async function fetchMercadoLivreItemForTest(meliId) {
@@ -204,10 +375,7 @@ export async function fetchMercadoLivreItemForTest(meliId) {
 }
 
 async function fetchMeliResource(pathname, headers) {
-  if (!headers.Authorization) {
-    throw new Error(`Authorization Bearer ausente para Mercado Livre em /${pathname}`);
-  }
-  console.log(`[ML REQUEST] GET /${pathname} auth=Bearer`);
+  console.log(`[ML REQUEST] GET /${pathname} auth=${headers.Authorization ? "Bearer" : "public"}`);
   let lastError;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -249,6 +417,330 @@ async function fetchMeliResource(pathname, headers) {
   throw new Error(`Falha de rede Mercado Livre em /${pathname}: ${lastError?.message || "erro desconhecido"}`);
 }
 
+async function fetchMeliResourceSafe(pathname, headers) {
+  try {
+    return await fetchMeliResource(pathname, headers);
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      details: error.message
+    };
+  }
+}
+
+function withMethod(data, syncMethod, inputInfo) {
+  if (!data) return null;
+  return {
+    ...data,
+    sourceInput: inputInfo.sourceInput || null,
+    resolvedUrl: inputInfo.resolvedUrl || null,
+    itemId: inputInfo.itemId || (data.type === "item" ? data.meliId : data.sourceItemId) || null,
+    catalogProductId: inputInfo.productId || data.catalogProductId || null,
+    syncMethod,
+    syncWarnings: data.syncWarnings || []
+  };
+}
+
+function needsMoreData(data) {
+  if (!data) return true;
+  const hasTitle = Boolean(data.title && !/^ML[A-Z]{1,2}\d{6,}$/i.test(String(data.title)));
+  const hasImage = Boolean(data.heroImage || data.images?.length);
+  const hasPrice = Number.isFinite(Number(data.price)) && Number(data.price) > 0;
+  return !hasTitle || !hasImage || !hasPrice;
+}
+
+function mergeMercadoLivrePayload(base, extra) {
+  if (!base) return extra || null;
+  if (!extra) return base;
+  const basePrice = Number(base.price);
+  const extraPrice = Number(extra.price);
+  const images = extra.images?.length ? extra.images : base.images || [];
+  const syncMethod = needsMoreData(base) && !needsMoreData(extra) ? extra.syncMethod : base.syncMethod || extra.syncMethod;
+  return {
+    ...base,
+    ...extra,
+    title: meaningfulText(base.title) || meaningfulText(extra.title) || base.title || extra.title || null,
+    description: meaningfulText(base.description) || meaningfulText(extra.description) || base.description || extra.description || null,
+    price: Number.isFinite(basePrice) && basePrice > 0 ? basePrice : Number.isFinite(extraPrice) && extraPrice > 0 ? extraPrice : null,
+    oldPrice: base.oldPrice ?? extra.oldPrice ?? null,
+    heroImage: base.heroImage || extra.heroImage || images[0] || null,
+    images,
+    permalink: base.permalink || extra.permalink || null,
+    seller: base.seller || extra.seller || null,
+    itemId: base.itemId || extra.itemId || null,
+    catalogProductId: base.catalogProductId || extra.catalogProductId || null,
+    sourceInput: base.sourceInput || extra.sourceInput || null,
+    resolvedUrl: base.resolvedUrl || extra.resolvedUrl || null,
+    syncMethod,
+    syncWarnings: [...(base.syncWarnings || []), ...(extra.syncWarnings || [])]
+  };
+}
+
+function meaningfulText(value) {
+  const text = String(value || "").trim();
+  if (!text || /^ML[A-Z]{1,2}\d{6,}$/i.test(text)) return "";
+  return text;
+}
+
+async function fetchBestHtmlFallback(candidates, inputInfo) {
+  const urls = [...new Set((candidates || []).filter((url) => /^https?:\/\//i.test(String(url || ""))))];
+  for (const url of urls) {
+    const data = await fetchHtmlFallback(url, inputInfo);
+    if (data && !needsMoreData(data)) return data;
+    if (data) return data;
+  }
+  return null;
+}
+
+async function fetchHtmlFallback(url, inputInfo) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "User-Agent": "Mozilla/5.0 SMShopImporter/1.0"
+      },
+      redirect: "follow",
+      signal: controller.signal
+    });
+    const html = await response.text();
+    if (!response.ok || !html) return null;
+    const parsed = parseMercadoLivreHtml(html);
+    if (!parsed.title && !parsed.heroImage && !parsed.price) return null;
+    return withMethod(
+      {
+        meliId: inputInfo.meliId,
+        type: inputInfo.meliType || "html",
+        ...parsed,
+        permalink: response.url || url,
+        resolvedUrl: response.url || url,
+        fetchedAt: new Date().toISOString(),
+        syncStatus: parsed.price ? "synced" : "partial",
+        syncWarnings: ["Dados complementados pelo HTML público do Mercado Livre"]
+      },
+      "Fallback HTML",
+      { ...inputInfo, resolvedUrl: response.url || url }
+    );
+  } catch (error) {
+    console.log(`[ML HTML] falha ao buscar ${url}: ${error.message}`);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseMercadoLivreHtml(html) {
+  const jsonLd = extractJsonLdData(html);
+  const title = cleanTitle(
+    getMetaContent(html, "property", "og:title") ||
+    getMetaContent(html, "name", "twitter:title") ||
+    jsonLd.title ||
+    getTagContent(html, "title")
+  );
+  const description = cleanText(
+    getMetaContent(html, "property", "og:description") ||
+    getMetaContent(html, "name", "description") ||
+    jsonLd.description ||
+    ""
+  );
+  const price = firstNumber([
+    jsonLd.price,
+    getMetaContent(html, "property", "product:price:amount"),
+    getMetaContent(html, "name", "twitter:data1"),
+    extractVisibleHtmlPrice(html)
+  ]);
+  const images = [
+    getMetaContent(html, "property", "og:image"),
+    getMetaContent(html, "name", "twitter:image"),
+    ...normalizeHtmlImages(jsonLd.images)
+  ].filter(Boolean);
+
+  return {
+    title,
+    description,
+    price,
+    currency: getMetaContent(html, "property", "product:price:currency") || jsonLd.currency || "BRL",
+    heroImage: images[0] || null,
+    images: [...new Set(images)]
+  };
+}
+
+function getMetaContent(html, attr, name) {
+  const pattern = new RegExp(`<meta\\s+[^>]*${attr}=["']${escapeRegExp(name)}["'][^>]*content=["']([^"']+)["'][^>]*>`, "i");
+  const reversePattern = new RegExp(`<meta\\s+[^>]*content=["']([^"']+)["'][^>]*${attr}=["']${escapeRegExp(name)}["'][^>]*>`, "i");
+  return decodeHtml((html.match(pattern) || html.match(reversePattern))?.[1] || "");
+}
+
+function getTagContent(html, tagName) {
+  const match = html.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i"));
+  return decodeHtml(match?.[1] || "");
+}
+
+function extractJsonLdData(html) {
+  const blocks = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  for (const block of blocks) {
+    try {
+      const parsed = JSON.parse(decodeHtml(block[1]).trim());
+      const nodes = Array.isArray(parsed) ? parsed : [parsed, ...(parsed["@graph"] || [])];
+      const product = nodes.find((node) => /product/i.test(String(node?.["@type"] || ""))) || nodes[0];
+      if (!product || typeof product !== "object") continue;
+      const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers || {};
+      return {
+        title: product.name || null,
+        description: product.description || null,
+        price: offer.price || offer.lowPrice || null,
+        currency: offer.priceCurrency || null,
+        images: product.image || []
+      };
+    } catch {
+      continue;
+    }
+  }
+  return {};
+}
+
+function normalizeHtmlImages(images) {
+  if (!images) return [];
+  if (Array.isArray(images)) return images.map((image) => typeof image === "string" ? image : image?.url).filter(Boolean);
+  if (typeof images === "string") return [images];
+  if (typeof images === "object" && images.url) return [images.url];
+  return [];
+}
+
+function extractVisibleHtmlPrice(html) {
+  const normalized = html.replace(/\s+/g, " ");
+  const match = normalized.match(/R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})|[0-9]+(?:,[0-9]{2})?)/);
+  if (!match) return null;
+  return Number(match[1].replace(/\./g, "").replace(",", "."));
+}
+
+function cleanTitle(value) {
+  return cleanText(value).replace(/\s*\|\s*Mercado Livre.*$/i, "").replace(/\s*-\s*Mercado Livre.*$/i, "");
+}
+
+function cleanText(value) {
+  return decodeHtml(String(value || "")).replace(/\s+/g, " ").trim();
+}
+
+function decodeHtml(value) {
+  return String(value || "")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#34;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function fetchSearchFallback(query, headers, inputInfo) {
+  const searchText = buildSearchQuery(query, inputInfo);
+  if (!searchText) return null;
+  const result = await fetchMeliResourceSafe(`sites/MLB/search?q=${encodeURIComponent(searchText)}`, headers);
+  if (!result.ok) return null;
+  const offer = extractOffers(result.data).map((item) => normalizeOffer(item, "search_fallback")).filter(isValidOffer)[0] || extractOffers(result.data)[0];
+  if (!offer) return null;
+  return withMethod(
+    {
+      meliId: inputInfo.meliId || offer.id || offer.item_id,
+      type: "search",
+      title: offer.title || null,
+      price: extractMercadoLivrePrice(offer),
+      oldPrice: extractOriginalPriceValue(offer),
+      currency: offer.currency_id || "BRL",
+      heroImage: offer.thumbnail || null,
+      images: [offer.thumbnail].filter(Boolean),
+      available: offer.status === "active" || Number(offer.available_quantity || 0) > 0,
+      status: offer.status || null,
+      stock: Number(offer.available_quantity || 0),
+      soldQuantity: Number(offer.sold_quantity || 0),
+      permalink: offer.permalink || null,
+      itemId: offer.item_id || offer.id || null,
+      catalogProductId: offer.catalog_product_id || inputInfo.productId || null,
+      seller: offer.seller || null,
+      fetchedAt: new Date().toISOString(),
+      syncStatus: extractMercadoLivrePrice(offer) ? "synced" : "partial",
+      syncWarnings: ["Dados complementados pela busca do Mercado Livre"]
+    },
+    "Fallback search",
+    inputInfo
+  );
+}
+
+function buildSearchQuery(query, inputInfo) {
+  const text = meaningfulText(query) || meaningfulText(inputInfo.sourceInput);
+  if (text && !/^https?:\/\//i.test(text)) return text.replace(/\bML[A-Z]{1,2}\d+\b/gi, "").trim() || inputInfo.meliId;
+  try {
+    const url = new URL(inputInfo.resolvedUrl || inputInfo.sourceInput || "");
+    const slug = url.pathname.split("/").filter(Boolean).find((part) => !/^p$/i.test(part) && !/^ML/i.test(part));
+    return slug ? slug.replace(/-/g, " ") : inputInfo.meliId;
+  } catch {
+    return inputInfo.meliId;
+  }
+}
+
+function buildManualReviewFallback(inputInfo, warnings, errorMessage) {
+  const meliId = inputInfo.meliId || extractMercadoLivreId(inputInfo.sourceInput) || "MLB";
+  return {
+    meliId,
+    type: inputInfo.meliType || "manual",
+    title: `Produto Mercado Livre ${meliId} — revisar título`,
+    price: null,
+    oldPrice: null,
+    heroImage: null,
+    images: [],
+    available: null,
+    status: null,
+    stock: null,
+    soldQuantity: null,
+    permalink: inputInfo.resolvedUrl || null,
+    sourceInput: inputInfo.sourceInput || null,
+    resolvedUrl: inputInfo.resolvedUrl || null,
+    itemId: inputInfo.itemId || null,
+    catalogProductId: inputInfo.productId || null,
+    fetchedAt: new Date().toISOString(),
+    syncStatus: "partial",
+    syncMethod: "Manual/revisar",
+    syncWarnings: [...warnings, "Título, preço ou imagem não encontrados; revise manualmente"].filter(Boolean),
+    syncWarning: errorMessage || "Dados insuficientes no Mercado Livre; revise manualmente",
+    errorMessage
+  };
+}
+
+function finalizeHybridData(data, inputInfo, warnings) {
+  const hasTitle = Boolean(meaningfulText(data.title));
+  const hasImage = Boolean(data.heroImage || data.images?.length);
+  const hasPrice = Number.isFinite(Number(data.price)) && Number(data.price) > 0;
+  const syncWarnings = [...new Set([
+    ...warnings,
+    !hasTitle ? "Título não encontrado, revise manualmente" : "",
+    !hasImage ? "Imagem não encontrada, revise manualmente" : "",
+    !hasPrice ? "Preço não encontrado; preço manual será usado quando informado" : ""
+  ].filter(Boolean))];
+
+  return {
+    ...data,
+    meliId: inputInfo.meliId || data.meliId,
+    type: data.type || inputInfo.meliType || null,
+    title: hasTitle ? data.title : `Produto Mercado Livre ${inputInfo.meliId || data.meliId} — revisar título`,
+    heroImage: data.heroImage || data.images?.[0] || null,
+    sourceInput: inputInfo.sourceInput || data.sourceInput || null,
+    resolvedUrl: data.resolvedUrl || inputInfo.resolvedUrl || null,
+    itemId: data.itemId || inputInfo.itemId || null,
+    catalogProductId: data.catalogProductId || inputInfo.productId || null,
+    fetchedAt: data.fetchedAt || new Date().toISOString(),
+    syncStatus: hasTitle && hasImage && hasPrice ? "synced" : "partial",
+    syncMethod: data.syncMethod || "API parcial",
+    syncWarnings,
+    syncWarning: syncWarnings[0] || null
+  };
+}
+
 function normalizeMeliItem(meliId, item) {
   const stock = Number(item.available_quantity || 0);
   const status = item.status || null;
@@ -284,6 +776,9 @@ function normalizeMeliItem(meliId, item) {
     soldQuantity: Number(item.sold_quantity || 0),
     permalink: item.permalink || null,
     seller,
+    category: item.category_id || null,
+    catalogProductId: item.catalog_product_id || null,
+    attributes: Array.isArray(item.attributes) ? item.attributes : [],
     fetchedAt: new Date().toISOString(),
     syncStatus: price === null ? "partial" : "synced"
   };
@@ -337,6 +832,9 @@ function normalizeMeliCatalogProduct(meliId, product, resolvedPrice = null) {
     stock,
     soldQuantity: Number(product.sold_quantity || buyBoxWinner.sold_quantity || resolvedPrice?.sold_quantity || 0),
     permalink: product.permalink || resolvedPrice?.permalink || null,
+    category: product.domain_id || product.main_features?.[0]?.text || null,
+    catalogProductId: product.id || meliId,
+    attributes: Array.isArray(product.attributes) ? product.attributes : [],
     fetchedAt: new Date().toISOString(),
     syncStatus,
     sourceItemId: resolvedPrice?.item_id || resolvedPrice?.id || buyBoxWinner.item_id || null,

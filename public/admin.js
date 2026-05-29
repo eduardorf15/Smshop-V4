@@ -105,7 +105,7 @@ async function onImport(event) {
     form.reset();
     resetFormDefaults(form);
     await refreshAll();
-    setMessage(`Produto importado e publicado: ${result.product?.name || result.product?.id || "novo produto"}.`, "ok");
+    setMessage(importResultMessage(result.product), "ok");
   } catch (error) {
     setMessage(error.message, "error");
   } finally {
@@ -298,11 +298,12 @@ function renderProducts() {
           <div class="meta-row">
             <span>${escapeHtml(product.category || "Sem categoria")}</span>
             <span>${formatPrice(product.price)}</span>
-            <span>${escapeHtml(product.dataSource || "manual")}</span>
+            <span>${escapeHtml(product.syncMethod || statusLabel(product))}</span>
             <span>${escapeHtml(product.syncStatus || "fallback")}</span>
             <span>${product.available === false ? "indisponível" : "ativo"}</span>
             ${product.featured ? "<span>destaque</span>" : ""}
           </div>
+          ${renderProductWarnings(product)}
         </div>
         <div class="row-actions">
           <button type="button" class="ghost" data-action="edit">Editar</button>
@@ -335,6 +336,35 @@ function renderAnalytics() {
     <strong>${escapeHtml(item.productName || item.productId)}</strong>
     <span>${formatDate(item.clickedAt)}</span>
   `);
+}
+
+function importResultMessage(product) {
+  const name = product?.name || product?.id || "novo produto";
+  const warnings = productWarnings(product);
+  return warnings.length
+    ? `Produto importado e publicado: ${name}. ${warnings.slice(0, 3).join(" ")}`
+    : `Produto importado e publicado: ${name}.`;
+}
+
+function statusLabel(product) {
+  if (product.dataSource === "mercadolivre-item") return "API OK";
+  if (product.dataSource === "mercadolivre") return "API OK";
+  if (product.dataSource === "mercadolivre-partial") return "API parcial";
+  return product.dataSource || "manual";
+}
+
+function productWarnings(product) {
+  return [
+    ...(product?.syncWarnings || []),
+    product?.syncWarning || ""
+  ].filter(Boolean);
+}
+
+function renderProductWarnings(product) {
+  const warnings = productWarnings(product);
+  return warnings.length
+    ? `<p class="sync-note">${escapeHtml(warnings.slice(0, 2).join(" · "))}</p>`
+    : "";
 }
 
 function renderList(selector, items, renderItem) {
