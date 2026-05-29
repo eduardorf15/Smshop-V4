@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "../..");
-const storageDir = path.join(rootDir, "server/storage");
-const tokenFile = path.join(storageDir, "meli-tokens.json");
+const storageDir = path.join(rootDir, "server/data");
+const tokenFile = path.join(storageDir, "mercadolivre-auth.json");
+const legacyTokenFile = path.join(rootDir, "server/storage/meli-tokens.json");
 const authorizationUrl = "https://auth.mercadolivre.com.br/authorization";
 const tokenUrl = "https://api.mercadolibre.com/oauth/token";
 const refreshSkewMs = 60 * 1000;
@@ -44,24 +45,24 @@ export async function saveToken(tokenResponse) {
   const expiresIn = Number(tokenResponse.expires_in || 0);
   const savedAt = new Date();
   const token = {
-    accessToken: tokenResponse.access_token,
-    refreshToken: tokenResponse.refresh_token,
-    tokenType: tokenResponse.token_type || "bearer",
+    access_token: tokenResponse.access_token,
+    refresh_token: tokenResponse.refresh_token,
+    token_type: tokenResponse.token_type || "bearer",
     scope: tokenResponse.scope || null,
-    userId: tokenResponse.user_id || null,
-    expiresAt: new Date(savedAt.getTime() + expiresIn * 1000).toISOString(),
-    savedAt: savedAt.toISOString()
+    user_id: tokenResponse.user_id || null,
+    expires_at: new Date(savedAt.getTime() + expiresIn * 1000).toISOString(),
+    saved_at: savedAt.toISOString()
   };
 
-  if (!token.accessToken || !token.refreshToken) {
+  if (!token.access_token || !token.refresh_token) {
     throw createPublicError("Resposta OAuth do Mercado Livre não trouxe tokens válidos.", 502);
   }
 
-  memoryToken = token;
+  memoryToken = normalizeToken(token);
   await fs.mkdir(storageDir, { recursive: true });
   await fs.writeFile(tokenFile, JSON.stringify(token, null, 2), { mode: 0o600 });
   await fs.chmod(tokenFile, 0o600);
-  return token;
+  return memoryToken;
 }
 
 export async function readSavedToken() {
@@ -72,6 +73,25 @@ export async function readSavedToken() {
     memoryToken = normalizeToken(JSON.parse(raw));
     return memoryToken;
   } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+
+  try {
+    const raw = await fs.readFile(legacyTokenFile, "utf8");
+    const token = normalizeToken(JSON.parse(raw));
+    if (token?.accessToken || token?.refreshToken) {
+      await saveToken({
+        access_token: token.accessToken,
+        refresh_token: token.refreshToken,
+        token_type: token.tokenType,
+        scope: token.scope,
+        user_id: token.userId,
+        expires_in: Math.max(0, Math.floor((Date.parse(token.expiresAt || "") - Date.now()) / 1000))
+      });
+      return memoryToken;
+    }
+    return null;
+  } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
@@ -79,24 +99,48 @@ export async function readSavedToken() {
 
 export async function getConnectionStatus() {
   const token = await readSavedToken();
+  const configured = hasConfig();
   if (!token) {
     return {
       connected: false,
-      expiresAt: null
+      configured,
+      tokenValid: false,
+      tokenExpired: false,
+      expiresAt: null,
+      authMode: "fallback"
     };
   }
 
+  const tokenExpired = isExpiredOrNearExpiry(token);
   return {
     connected: Boolean(token.accessToken || token.refreshToken),
+    configured,
+    tokenValid: Boolean(token.accessToken && !tokenExpired),
+    tokenExpired,
     expiresAt: token.expiresAt || null,
-    userId: token.userId || null
+    userId: token.userId || null,
+    authMode: token.accessToken || token.refreshToken ? "oauth" : "fallback",
+    storageFile: tokenFile
+  };
+}
+
+export async function getAuthDebugStatus() {
+  const status = await getConnectionStatus();
+  return {
+    tokenValid: status.tokenValid,
+    tokenExpired: status.tokenExpired,
+    connected: status.connected,
+    configured: status.configured,
+    authMode: status.connected ? "oauth" : "fallback",
+    expiresAt: status.expiresAt,
+    userId: status.userId || null
   };
 }
 
 export async function getValidAccessToken() {
   const token = await readSavedToken();
   if (!token?.accessToken && !token?.refreshToken) {
-    throw createPublicError("Mercado Livre não conectado. Acesse /auth/mercadolivre para conectar primeiro.", 401);
+    throw createPublicError("Mercado Livre não conectado. Acesse /auth/mercadolivre/login para conectar primeiro.", 401);
   }
 
   if (token.accessToken && !isExpiredOrNearExpiry(token)) {
@@ -125,6 +169,9 @@ export async function refreshAccessToken(refreshToken) {
   });
 
   const token = await requestToken(body);
+  if (!token.refresh_token) token.refresh_token = refreshToken;
+  const current = await readSavedToken();
+  if (!token.user_id && current?.userId) token.user_id = current.userId;
   return saveToken(token);
 }
 
@@ -157,6 +204,10 @@ function getConfig() {
   }
 
   return { clientId, clientSecret, redirectUri };
+}
+
+function hasConfig() {
+  return Boolean(process.env.MELI_CLIENT_ID && process.env.MELI_CLIENT_SECRET && process.env.MELI_REDIRECT_URI);
 }
 
 function isExpiredOrNearExpiry(token) {

@@ -33,7 +33,7 @@ router.get("/api/health", (_req, res) => {
   res.json({ ok: true, app: "smshop-v4" });
 });
 
-router.get("/auth/mercadolivre", (_req, res, next) => {
+router.get(["/auth/mercadolivre", "/auth/mercadolivre/login"], (_req, res, next) => {
   try {
     res.redirect(generateAuthorizationUrl());
   } catch (error) {
@@ -45,21 +45,8 @@ router.get("/auth/mercadolivre/callback", async (req, res, next) => {
   try {
     const code = String(req.query.code || "");
     const token = await exchangeCodeForToken(code);
-    res
-      .status(200)
-      .type("html")
-      .send(`<!doctype html>
-<html lang="pt-BR">
-  <head>
-    <meta charset="utf-8">
-    <title>Mercado Livre conectado</title>
-  </head>
-  <body>
-    <h1>Mercado Livre conectado com sucesso.</h1>
-    <p>Usuário: ${escapeHtml(String(token.userId || "não informado"))}</p>
-    <p>Expira em: ${escapeHtml(token.expiresAt)}</p>
-  </body>
-</html>`);
+    console.log(`[ML OAUTH] Mercado Livre conectado userId=${token.userId || "unknown"} expiresAt=${token.expiresAt || "unknown"}`);
+    res.redirect("/admin?mercadolivre=connected");
   } catch (error) {
     next(error);
   }

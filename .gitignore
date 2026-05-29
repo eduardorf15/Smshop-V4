@@ -9,3 +9,4 @@ logs/
 dist/
 .cache/
 server/storage/meli-tokens.json
+server/data/mercadolivre-auth.json

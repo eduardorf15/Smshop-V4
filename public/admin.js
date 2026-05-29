@@ -4,6 +4,7 @@ const state = {
   products: [],
   dashboard: {},
   analytics: null,
+  mercadoLivre: null,
   alerts: { total: 0, products: [], alerts: [] },
   filters: { search: "", category: "", status: "" },
   editing: null,
@@ -23,7 +24,9 @@ const nodes = {
   manualForm: document.querySelector("[data-manual-form]"),
   aiProductSelect: document.querySelector("[data-ai-product-select]"),
   aiResult: document.querySelector("[data-ai-result]"),
-  aiModalResult: document.querySelector("[data-ai-modal-result]")
+  aiModalResult: document.querySelector("[data-ai-modal-result]"),
+  mercadoLivreStatus: document.querySelector("[data-ml-status]"),
+  mercadoLivreConnect: document.querySelector("[data-ml-connect]")
 };
 
 boot();
@@ -31,8 +34,9 @@ boot();
 async function boot() {
   initCategorySelects();
   bindEvents();
-  await Promise.all([loadDashboard(), loadProducts(), loadAlerts()]);
+  await Promise.all([loadDashboard(), loadProducts(), loadAlerts(), loadMercadoLivreStatus()]);
   renderDashboard();
+  renderMercadoLivreStatus();
   renderAlerts();
   renderProducts();
   renderAnalytics();
@@ -57,8 +61,9 @@ function bindEvents() {
 async function refreshAll() {
   setMessage("Carregando painel emergencial...");
   try {
-    await Promise.all([loadDashboard(), loadProducts(), loadAlerts()]);
+    await Promise.all([loadDashboard(), loadProducts(), loadAlerts(), loadMercadoLivreStatus()]);
     renderDashboard();
+    renderMercadoLivreStatus();
     renderAlerts();
     renderProducts();
     renderAnalytics();
@@ -85,6 +90,15 @@ async function loadProducts() {
 async function loadAlerts() {
   const alertsData = await apiFetch("/api/admin/alerts");
   state.alerts = alertsData.alerts || { total: 0, products: [], alerts: [] };
+}
+
+async function loadMercadoLivreStatus() {
+  state.mercadoLivre = await apiFetch("/api/mercadolivre/status").catch((error) => ({
+    connected: false,
+    tokenValid: false,
+    tokenExpired: false,
+    message: error.message
+  }));
 }
 
 async function onImport(event) {
@@ -464,6 +478,25 @@ function renderDashboard() {
   `).join("");
 
   renderCategoryFilter();
+}
+
+function renderMercadoLivreStatus() {
+  const status = state.mercadoLivre || {};
+  const connected = Boolean(status.connected && status.tokenValid);
+  const expired = Boolean(status.connected && status.tokenExpired);
+  if (nodes.mercadoLivreStatus) {
+    nodes.mercadoLivreStatus.textContent = connected
+      ? "Mercado Livre conectado ✅"
+      : expired
+      ? "Mercado Livre expirado"
+      : "Mercado Livre desconectado";
+    nodes.mercadoLivreStatus.classList.toggle("is-ok", connected);
+    nodes.mercadoLivreStatus.classList.toggle("is-error", !connected);
+  }
+  if (nodes.mercadoLivreConnect) {
+    nodes.mercadoLivreConnect.hidden = connected;
+    nodes.mercadoLivreConnect.textContent = expired ? "Reconectar Mercado Livre" : "Conectar Mercado Livre";
+  }
 }
 
 function renderAlerts() {

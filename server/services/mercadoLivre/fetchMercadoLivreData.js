@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import { createHash } from "node:crypto";
-import { getValidAccessToken, readSavedToken } from "../mercadoLivreAuthService.js";
+import { getAuthDebugStatus, getValidAccessToken } from "../mercadoLivreAuthService.js";
 import { detectIdKind, normalizeMercadoLivreInput } from "./normalizeInput.js";
 
 const requestTimeoutMs = Number(process.env.MELI_REQUEST_TIMEOUT_MS || 10000);
@@ -9,20 +9,21 @@ const maxRetries = Number(process.env.MELI_REQUEST_RETRIES || 2);
 export async function fetchMercadoLivreData(input, options = {}) {
   const normalizedInput = typeof input === "object" && input?.originalInput ? input : await normalizeMercadoLivreInput(input);
   const trace = options.trace || createTrace(normalizedInput);
-  const headers = await buildHeaders();
+  const auth = await buildAuthContext();
+  trace.auth = auth.debug;
   let merged = emptyPayload("none");
 
   const itemId = normalizedInput.itemId || (detectIdKind(normalizedInput.meliId) === "item" ? normalizedInput.meliId : null);
   if (itemId) {
-    const item = await fetchApiItem(itemId, headers, trace);
+    const item = await fetchApiItem(itemId, auth, trace);
     merged = mergePayloads(merged, item);
     if (!normalizedInput.catalogId && item?.catalogId) normalizedInput.catalogId = item.catalogId;
   }
 
   const catalogId = normalizedInput.catalogId || (detectIdKind(normalizedInput.meliId) === "catalog" ? normalizedInput.meliId : null);
   if (catalogId && needsMoreData(merged)) {
-    merged = mergePayloads(merged, await fetchApiCatalog(catalogId, headers, trace));
-    merged = mergePayloads(merged, await fetchCatalogItems(catalogId, headers, trace));
+    merged = mergePayloads(merged, await fetchApiCatalog(catalogId, auth, trace));
+    merged = mergePayloads(merged, await fetchCatalogItems(catalogId, auth, trace));
   }
 
   if (needsMoreData(merged)) {
@@ -31,7 +32,7 @@ export async function fetchMercadoLivreData(input, options = {}) {
   }
 
   if (needsMoreData(merged)) {
-    merged = mergePayloads(merged, await fetchSearchFallback(normalizedInput, merged, headers, trace));
+    merged = mergePayloads(merged, await fetchSearchFallback(normalizedInput, merged, auth, trace));
   }
 
   const finalPayload = finalizePayload(merged, normalizedInput);
@@ -133,33 +134,34 @@ function createTrace(normalizedInput) {
     priceCandidates: [],
     htmlExtraction: null,
     parsedFields: null,
+    auth: null,
     fallbackTriggers: []
   };
 }
 
-async function fetchApiItem(itemId, headers, trace) {
-  const item = await fetchMeliResource(`items/${encodeURIComponent(itemId)}`, headers, trace);
+async function fetchApiItem(itemId, auth, trace) {
+  const item = await fetchMeliResource(`items/${encodeURIComponent(itemId)}`, auth, trace);
   if (!item.ok) return null;
-  const description = await fetchMeliResource(`items/${encodeURIComponent(itemId)}/description`, headers, trace);
+  const description = await fetchMeliResource(`items/${encodeURIComponent(itemId)}/description`, auth, trace);
   const payload = fromApiItem(item.data, description.ok ? description.data : null);
   recordPayloadCandidates(trace, payload, `api/items/${itemId}`);
   return payload;
 }
 
-async function fetchApiCatalog(catalogId, headers, trace) {
-  const product = await fetchMeliResource(`products/${encodeURIComponent(catalogId)}`, headers, trace);
+async function fetchApiCatalog(catalogId, auth, trace) {
+  const product = await fetchMeliResource(`products/${encodeURIComponent(catalogId)}`, auth, trace);
   if (!product.ok) return null;
   const payload = fromApiCatalog(product.data);
   recordPayloadCandidates(trace, payload, `api/products/${catalogId}`);
   return payload;
 }
 
-async function fetchCatalogItems(catalogId, headers, trace) {
+async function fetchCatalogItems(catalogId, auth, trace) {
   const endpoints = [
     `products/${encodeURIComponent(catalogId)}/items`,
     `sites/MLB/search?catalog_product_id=${encodeURIComponent(catalogId)}`
   ];
-  const responses = await Promise.all(endpoints.map((endpoint) => fetchMeliResource(endpoint, headers, trace)));
+  const responses = await Promise.all(endpoints.map((endpoint) => fetchMeliResource(endpoint, auth, trace)));
   const offers = responses.flatMap((response) => response.ok ? extractOffers(response.data).map(fromOffer).filter(Boolean) : []);
   const best = offers.filter((offer) => offer.price).sort((a, b) => Number(a.price) - Number(b.price))[0] || offers[0] || null;
   recordPayloadCandidates(trace, best, `api/catalog-items/${catalogId}`);
@@ -179,10 +181,10 @@ async function fetchBestHtml(normalizedInput, current, trace) {
   return null;
 }
 
-async function fetchSearchFallback(normalizedInput, current, headers, trace) {
+async function fetchSearchFallback(normalizedInput, current, auth, trace) {
   const query = buildSearchQuery(normalizedInput, current);
   if (!query) return null;
-  const response = await fetchMeliResource(`sites/MLB/search?q=${encodeURIComponent(query)}`, headers, trace);
+  const response = await fetchMeliResource(`sites/MLB/search?q=${encodeURIComponent(query)}`, auth, trace);
   if (!response.ok) return null;
   const offers = extractOffers(response.data).map(fromOffer).filter(Boolean);
   const best = offers
@@ -192,16 +194,29 @@ async function fetchSearchFallback(normalizedInput, current, headers, trace) {
   return best ? { ...best, source: "search", confidence: confidence(best) } : null;
 }
 
-async function fetchMeliResource(pathname, headers, trace) {
+async function fetchMeliResource(pathname, auth, trace) {
+  const url = `https://api.mercadolibre.com/${pathname}`;
+  if (!auth.headers.Authorization) {
+    recordAttempt(trace, {
+      layer: "api",
+      method: "GET",
+      url,
+      status: 0,
+      ok: false,
+      authMode: "fallback",
+      details: "API oficial ignorada: Mercado Livre OAuth não conectado"
+    });
+    return { ok: false, status: 0, details: "OAuth Mercado Livre não conectado" };
+  }
+
   let lastError = "";
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-    const url = `https://api.mercadolibre.com/${pathname}`;
     try {
-      const response = await fetch(url, { headers, signal: controller.signal });
+      const response = await fetch(url, { headers: auth.headers, signal: controller.signal });
       const data = await response.json().catch(() => ({}));
-      recordAttempt(trace, { layer: "api", method: "GET", url, status: response.status, ok: response.ok, details: response.ok ? "ok" : summarizeApiError(data, response.status) });
+      recordAttempt(trace, { layer: "api", method: "GET", url, status: response.status, ok: response.ok, authMode: auth.debug.authMode, details: response.ok ? "ok" : summarizeApiError(data, response.status) });
       if (response.ok) return { ok: true, data };
       lastError = summarizeApiError(data, response.status);
       if (![408, 429].includes(response.status) && response.status < 500) return { ok: false, status: response.status, details: lastError };
@@ -786,13 +801,32 @@ function summarizeApiError(data, status) {
   return [data?.message, data?.error, data?.cause?.[0]?.message].filter(Boolean).join(" | ") || `HTTP ${status}`;
 }
 
-async function buildHeaders() {
+async function buildAuthContext() {
+  const debug = await getAuthDebugStatus();
   const headers = { Accept: "application/json" };
-  const savedToken = await readSavedToken();
-  const envToken = process.env.MERCADO_LIVRE_ACCESS_TOKEN || process.env.MELI_ACCESS_TOKEN;
-  if (savedToken?.accessToken || savedToken?.refreshToken) headers.Authorization = `Bearer ${await getValidAccessToken()}`;
-  else if (envToken) headers.Authorization = `Bearer ${envToken}`;
-  return headers;
+  if (!debug.connected) return { headers, debug };
+
+  try {
+    const accessToken = await getValidAccessToken();
+    headers.Authorization = `Bearer ${accessToken}`;
+    const refreshedDebug = await getAuthDebugStatus();
+    return {
+      headers,
+      debug: {
+        ...refreshedDebug,
+        authMode: "oauth"
+      }
+    };
+  } catch (error) {
+    return {
+      headers,
+      debug: {
+        ...debug,
+        authMode: "fallback",
+        tokenError: error.message
+      }
+    };
+  }
 }
 
 function similarity(a, b) {

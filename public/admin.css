@@ -89,6 +89,29 @@ button:disabled { cursor: progress; opacity: 0.58; }
   align-items: center;
 }
 
+.ml-status {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ml-status.is-ok {
+  color: var(--green);
+  border-color: rgba(118, 221, 160, 0.35);
+}
+
+.ml-status.is-error {
+  color: var(--red);
+  border-color: rgba(255, 116, 116, 0.35);
+}
+
 h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: 6px; font-size: clamp(32px, 5vw, 54px); letter-spacing: 0; }
 h2 { margin: 0; font-size: 21px; letter-spacing: 0; }
