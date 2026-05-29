@@ -28,12 +28,16 @@ export async function getMercadoLivreData(products, options = {}) {
       const cached = cache[meliId];
       const isFresh = cached?.fetchedAt && now - cached.fetchedAt < ttlMs;
       const cachedHasError = cached?.data?.syncStatus === "error";
-      if (isFresh && !cachedHasError && !options.force) {
+      const cachedHasBadData = isBadMercadoLivreCacheData(cached?.data);
+      if (isFresh && !cachedHasError && !cachedHasBadData && !options.force) {
         console.log(`[ML SYNC] Usando cache Mercado Livre para ${product.id} (${meliId})`);
         return [product.id, cached.data];
       }
       if (isFresh && cachedHasError) {
         console.log(`[ML SYNC] Ignorando cache de erro Mercado Livre para ${product.id} (${meliId})`);
+      }
+      if (isFresh && cachedHasBadData) {
+        console.log(`[ML SYNC] Ignorando cache Mercado Livre ruim para ${product.id} (${meliId})`);
       }
 
       try {
@@ -59,6 +63,13 @@ export async function getMercadoLivreData(products, options = {}) {
 
   await writeCache(nextCache);
   return Object.fromEntries(updates);
+}
+
+function isBadMercadoLivreCacheData(data) {
+  if (!data || data.syncStatus === "error") return false;
+  const badTitle = data.title && !meaningfulText(data.title);
+  const badImage = data.heroImage && !isUsefulMercadoLivreImage(data.heroImage);
+  return Boolean(badTitle || badImage);
 }
 
 export async function refreshMercadoLivreCache(products) {
@@ -511,7 +522,7 @@ function withMethod(data, syncMethod, inputInfo) {
 
 function needsMoreData(data) {
   if (!data) return true;
-  const hasTitle = Boolean(data.title && !/^ML[A-Z]{1,2}\d{6,}$/i.test(String(data.title)));
+  const hasTitle = Boolean(meaningfulText(data.title));
   const hasImage = Boolean(data.heroImage || data.images?.length);
   const hasPrice = Number.isFinite(Number(data.price)) && Number(data.price) > 0;
   return !hasTitle || !hasImage || !hasPrice;
@@ -547,6 +558,8 @@ function mergeMercadoLivrePayload(base, extra) {
 function meaningfulText(value) {
   const text = String(value || "").trim();
   if (!text || /^ML[A-Z]{1,2}\d{6,}$/i.test(text)) return "";
+  if (/^(mercado\s*livre|mercadolivre|produto\s+mercado\s+livre)$/i.test(text)) return "";
+  if (/^mercado\s*livre\s+brasil$/i.test(text)) return "";
   return text;
 }
 
@@ -669,13 +682,13 @@ function parseMercadoLivreHtml(html, debug = null) {
     ["scripts price/amount", scriptData.price],
     ...visiblePrices.map((value, index) => [`html visible price ${index + 1}`, value])
   ].forEach(([source, value]) => recordPriceCandidate(debug, { source, value }));
-  const title = cleanTitle(
+  const title = meaningfulText(cleanTitle(
     getMetaContent(html, "property", "og:title") ||
     getMetaContent(html, "name", "twitter:title") ||
     jsonLd.title ||
     scriptData.title ||
     getTagContent(html, "title")
-  );
+  ));
   const description = cleanText(
     getMetaContent(html, "property", "og:description") ||
     getMetaContent(html, "name", "description") ||
@@ -696,7 +709,7 @@ function parseMercadoLivreHtml(html, debug = null) {
     getMetaContent(html, "name", "twitter:image"),
     ...normalizeHtmlImages(jsonLd.images),
     ...normalizeHtmlImages(scriptData.images)
-  ].filter(Boolean);
+  ].filter(isUsefulMercadoLivreImage);
 
   return {
     title,
@@ -893,6 +906,13 @@ function normalizeHtmlImages(images) {
   if (typeof images === "string") return [images];
   if (typeof images === "object" && images.url) return [images.url];
   return [];
+}
+
+function isUsefulMercadoLivreImage(image) {
+  const url = String(image || "").trim();
+  if (!url) return false;
+  if (/logo|favicon|apple-touch-icon|placeholder/i.test(url)) return false;
+  return /^https?:\/\//i.test(url) || url.startsWith("//");
 }
 
 function extractVisibleHtmlPrices(html) {

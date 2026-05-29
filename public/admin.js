@@ -22,7 +22,8 @@ const nodes = {
   importForm: document.querySelector("[data-import-form]"),
   manualForm: document.querySelector("[data-manual-form]"),
   aiProductSelect: document.querySelector("[data-ai-product-select]"),
-  aiResult: document.querySelector("[data-ai-result]")
+  aiResult: document.querySelector("[data-ai-result]"),
+  aiModalResult: document.querySelector("[data-ai-modal-result]")
 };
 
 boot();
@@ -304,8 +305,9 @@ async function runAiAction(kind, button) {
     });
     state.aiResult = { kind, result: response.result || {} };
     state.aiContext = context;
-    renderAiResult(state.aiResult);
-    setMessage("IA concluiu. Revise o resultado antes de aplicar.", "ok");
+    renderAiResult(state.aiResult, context);
+    applyImmediateAiResult(kind, context);
+    setMessage(context.source === "edit" ? "IA concluiu dentro do modal. Revise os campos e salve quando quiser." : "IA concluiu. Revise o resultado antes de aplicar.", "ok");
   } catch (error) {
     setMessage(error.message, "error");
   } finally {
@@ -362,13 +364,24 @@ function productFromManualForm() {
   };
 }
 
-function renderAiResult(aiResult) {
-  if (!nodes.aiResult) return;
-  nodes.aiResult.value = JSON.stringify(aiResult.result, null, 2);
+function renderAiResult(aiResult, context = state.aiContext) {
+  const value = JSON.stringify(aiResult.result, null, 2);
+  if (context?.source === "edit" && nodes.aiModalResult) {
+    nodes.aiModalResult.value = value;
+  }
+  if (nodes.aiResult) {
+    nodes.aiResult.value = value;
+  }
 }
 
-function applyAiDescription() {
-  const result = getEditableAiResult();
+function applyImmediateAiResult(kind, context) {
+  if (context?.source !== "edit") return;
+  if (kind === "generate-description") applyAiDescription({ preferModal: true, silent: true });
+  if (kind === "suggest-tags") applyAiTags({ preferModal: true, silent: true });
+}
+
+function applyAiDescription(options = {}) {
+  const result = getEditableAiResult(options);
   const description = result.fullDescription || result.shortDescription || "";
   if (!description) {
     setMessage("A IA não retornou descrição aplicável.", "error");
@@ -380,11 +393,11 @@ function applyAiDescription() {
     return;
   }
   form.elements.description.value = description;
-  setMessage("Descrição aplicada no formulário. Revise e salve quando quiser.", "ok");
+  if (!options.silent) setMessage("Descrição aplicada no formulário. Revise e salve quando quiser.", "ok");
 }
 
-function applyAiTags() {
-  const result = getEditableAiResult();
+function applyAiTags(options = {}) {
+  const result = getEditableAiResult(options);
   const tags = [
     ...(result.searchTags || []),
     ...(result.categoryTags || []),
@@ -400,7 +413,7 @@ function applyAiTags() {
     return;
   }
   form.elements.tags.value = [...new Set(tags)].join(", ");
-  setMessage("Tags aplicadas no formulário. Revise e salve quando quiser.", "ok");
+  if (!options.silent) setMessage("Tags aplicadas no formulário. Revise e salve quando quiser.", "ok");
 }
 
 function getTargetFormForAiApply() {
@@ -410,9 +423,10 @@ function getTargetFormForAiApply() {
   return nodes.manualForm;
 }
 
-function getEditableAiResult() {
+function getEditableAiResult(options = {}) {
+  const source = options.preferModal || nodes.editor.open ? nodes.aiModalResult?.value : nodes.aiResult?.value;
   try {
-    return JSON.parse(nodes.aiResult?.value || "{}");
+    return JSON.parse(source || "{}");
   } catch {
     return state.aiResult?.result || {};
   }
@@ -591,6 +605,7 @@ function openEditor(product) {
   nodes.editForm.elements.badge.value = product.badge || "";
   nodes.editForm.elements.featured.checked = Boolean(product.featured);
   nodes.editForm.elements.available.checked = product.available !== false;
+  if (nodes.aiModalResult) nodes.aiModalResult.value = "";
   document.querySelector("[data-edit-subtitle]").textContent = `${product.id} - ${product.meliId || "manual"}`;
   nodes.editor.showModal();
 }
@@ -598,6 +613,7 @@ function openEditor(product) {
 function closeEditor() {
   if (nodes.editor.open) nodes.editor.close();
   state.editing = null;
+  if (nodes.aiModalResult) nodes.aiModalResult.value = "";
 }
 
 function filteredProducts() {

@@ -429,7 +429,9 @@ function mergeProductData(product, mercadoLivreData) {
     };
   }
 
-  const images = mercadoLivreData.images?.length ? mercadoLivreData.images : product.images;
+  const mercadoLivreImages = normalizeImageList(mercadoLivreData.images).filter(usefulImage);
+  const productImages = normalizeImageList(product.images).filter(usefulImage);
+  const images = mercadoLivreImages.length ? mercadoLivreImages : productImages;
   const rawMercadoLivrePrice = firstDefined([
     mercadoLivreData.price,
     mercadoLivreData.rawPrice,
@@ -450,7 +452,7 @@ function mergeProductData(product, mercadoLivreData) {
   const syncStatus = hasMercadoLivrePrice || hasManualPriceOverride ? "synced" : mercadoLivreData.syncStatus || "partial";
   const dataSource = hasManualPriceOverride && !hasMercadoLivrePrice ? "mercadolivre-partial" : buildMercadoLivreDataSource(mercadoLivreData.type, syncStatus);
   const discount = oldPrice && price ? Math.max(0, Math.round(((oldPrice - price) / oldPrice) * 100)) : product.discount;
-  const heroImage = mercadoLivreData.heroImage || images[0] || product.heroImage;
+  const heroImage = usefulImage(mercadoLivreData.heroImage) || images[0] || usefulImage(product.heroImage) || "/imagens/logo/logo.png";
   const rating = mercadoLivreData.rating ?? product.rating;
   const reviews = mercadoLivreData.reviews ?? mercadoLivreData.soldQuantity ?? product.reviews;
 
@@ -475,7 +477,8 @@ function mergeProductData(product, mercadoLivreData) {
 
   const mergedProduct = {
     ...product,
-    name: isReviewTitle(mercadoLivreData.title) ? product.name : mercadoLivreData.title || product.name,
+    name: isReviewTitle(mercadoLivreData.title) ? product.name : meaningfulProductText(mercadoLivreData.title) || product.name,
+    description: meaningfulProductText(mercadoLivreData.description) || product.description,
     price,
     oldPrice,
     discount,
@@ -677,16 +680,16 @@ async function persistSyncedImportedProduct(originalProduct, syncedProduct) {
   const current = importedProducts[index];
   const next = {
     ...current,
-    name: syncedProduct.name || current.name,
-    description: syncedProduct.description || current.description,
+    name: meaningfulProductText(syncedProduct.name) || current.name,
+    description: meaningfulProductText(syncedProduct.description) || current.description,
     price: current.manualPriceOverride && positiveNumberOrNull(current.price) !== null
       ? positiveNumberOrNull(current.price)
       : Number.isFinite(Number(syncedProduct.mercadoLivreParsedPrice)) && Number(syncedProduct.mercadoLivreParsedPrice) > 0
       ? Number(syncedProduct.mercadoLivreParsedPrice)
       : positiveNumberOrNull(current.price),
     oldPrice: syncedProduct.oldPrice ?? current.oldPrice ?? null,
-    images: syncedProduct.images?.length ? syncedProduct.images : current.images || [],
-    heroImage: syncedProduct.heroImage || current.heroImage || "/imagens/logo/logo.png",
+    images: normalizeImageList(syncedProduct.images).filter(usefulImage).length ? normalizeImageList(syncedProduct.images).filter(usefulImage) : current.images || [],
+    heroImage: usefulImage(syncedProduct.heroImage) || usefulImage(current.heroImage) || "/imagens/logo/logo.png",
     available: syncedProduct.available ?? current.available,
     mercadoLivrePermalink: syncedProduct.mercadoLivrePermalink || current.mercadoLivrePermalink || null,
     meliType: syncedProduct.meliType || current.meliType || null,
@@ -717,7 +720,7 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
   const id = existingProduct?.id || `meli-${meliId.toLowerCase()}`;
   const sku = existingProduct?.sku || `meli-${meliId}`;
   const mercadoLivreTitle = isReviewTitle(mercadoLivreData?.title) ? "" : mercadoLivreData?.title;
-  const title = mercadoLivreTitle || existingProduct?.name || `Produto Mercado Livre ${meliId} — revisar título`;
+  const title = meaningfulProductText(mercadoLivreTitle) || meaningfulProductText(existingProduct?.name) || `Produto Mercado Livre ${meliId} — revisar título`;
   const productType = category || existingProduct?.productType || "Mercado Livre";
   const categorySlug = slugify(category);
   const hasMercadoLivrePrice = Number.isFinite(Number(mercadoLivreData?.price)) && Number(mercadoLivreData?.price) > 0;
@@ -740,9 +743,9 @@ function buildImportedProduct({ existingProduct, mercadoLivreData, mercadoLivreE
     categorySlug,
     categoryTags: [categorySlug],
     productType,
-    description: mercadoLivreData?.description || existingProduct?.description || title,
-    images: mercadoLivreData?.images || existingProduct?.images || [],
-    heroImage: mercadoLivreData?.heroImage || mercadoLivreData?.images?.[0] || existingProduct?.heroImage || "/imagens/logo/logo.png",
+    description: meaningfulProductText(mercadoLivreData?.description) || meaningfulProductText(existingProduct?.description) || title,
+    images: normalizeImageList(mercadoLivreData?.images).length ? normalizeImageList(mercadoLivreData?.images) : normalizeImageList(existingProduct?.images),
+    heroImage: usefulImage(mercadoLivreData?.heroImage) || usefulImage(mercadoLivreData?.images?.[0]) || usefulImage(existingProduct?.heroImage) || usefulImage(existingProduct?.images?.[0]) || "/imagens/logo/logo.png",
     tags: [...new Set(tags)],
     affiliateUrl,
     price: hasManualPrice ? Number(manualPrice) : hasMercadoLivrePrice ? Number(mercadoLivreData.price) : positiveNumberOrNull(existingProduct?.price),
@@ -791,6 +794,20 @@ function priceSourceMessage(syncMethod) {
 
 function isReviewTitle(value) {
   return /Produto Mercado Livre .*revisar título/i.test(String(value || ""));
+}
+
+function meaningfulProductText(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^(mercado\s*livre|mercadolivre|produto\s+mercado\s+livre)$/i.test(text)) return "";
+  if (/^mercado\s*livre\s+brasil$/i.test(text)) return "";
+  return text;
+}
+
+function usefulImage(value) {
+  const image = String(value || "").trim();
+  if (!image || /logo\/logo\.png|placeholder|favicon/i.test(image)) return "";
+  return image;
 }
 
 function positiveNumberOrNull(value) {

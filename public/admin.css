@@ -178,6 +178,10 @@ p, label, select { color: var(--muted); }
   min-height: 38px;
   padding: 0 12px;
 }
+.ai-modal-result {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
 
 .stack { display: grid; gap: 13px; }
 .two-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
