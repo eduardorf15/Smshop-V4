@@ -82,11 +82,15 @@ button:disabled { cursor: progress; opacity: 0.58; }
   gap: 18px;
 }
 
-.toolbar, .filters, .modal-actions, .switch-row, .ai-actions {
+.toolbar, .filters, .modal-actions, .switch-row, .ai-actions, .field-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.field-actions {
+  padding-top: 2px;
 }
 
 .ml-status {

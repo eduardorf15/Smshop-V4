@@ -180,6 +180,7 @@ export async function getAdminProducts() {
 
 export async function createManualProduct(payload = {}) {
   const sourceInput = String(payload.sourceInput || "").trim();
+  const mercadoLivrePermalink = String(payload.mercadoLivrePermalink || "").trim();
   const meliId = String(payload.meliId || extractMercadoLivreIdV2(sourceInput) || "").trim() || null;
   const assistedManual = Boolean(payload.assistedMode || sourceInput || meliId);
   const aiEnhanced = Boolean(payload.aiEnhanced);
@@ -222,7 +223,7 @@ export async function createManualProduct(payload = {}) {
     aiEnhanced,
     importedAt: new Date().toISOString(),
     sourceInput: sourceInput || null,
-    mercadoLivrePermalink: sourceInput || null,
+    mercadoLivrePermalink: mercadoLivrePermalink || sourceInput || null,
     syncStatus,
     syncMethod: syncStatus,
     dataSource: syncStatus,

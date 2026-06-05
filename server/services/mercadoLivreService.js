@@ -194,6 +194,74 @@ export async function debugMercadoLivreImport(input) {
   };
 }
 
+export async function extractMercadoLivreField({ sourceInput, field = "all" } = {}) {
+  const requestedField = String(field || "all").trim().toLowerCase();
+  const allowedFields = new Set(["name", "price", "images", "description", "all"]);
+  if (!allowedFields.has(requestedField)) throw createPublicError("Campo de extração Mercado Livre inválido.", 400);
+  const input = String(sourceInput || "").trim();
+  if (!input) throw createPublicError("sourceInput é obrigatório para buscar dados do Mercado Livre.", 400);
+
+  const debug = await debugMercadoLivreImport(input);
+  const chosen = debug.chosenData || {};
+  const images = uniqueNonEmpty([
+    ...(Array.isArray(chosen.images) ? chosen.images : []),
+    chosen.heroImage,
+    debug.image,
+    ...(debug.imageCandidates || []).filter((candidate) => candidate.accepted).map((candidate) => candidate.value)
+  ]);
+  const fields = {
+    name: firstNonEmpty([
+      chosen.title,
+      chosen.name,
+      debug.title,
+      ...(debug.titleCandidates || []).filter((candidate) => candidate.accepted).map((candidate) => candidate.value)
+    ]),
+    price: firstPositiveNumber([
+      chosen.price,
+      debug.chosenPrice,
+      ...(debug.priceCandidates || []).filter((candidate) => candidate.accepted).map((candidate) => candidate.parsed ?? candidate.value)
+    ]),
+    images,
+    heroImage: images[0] || "",
+    description: firstNonEmpty([
+      chosen.description,
+      debug.parsedFields?.description,
+      debug.htmlExtraction?.description
+    ])
+  };
+
+  return {
+    field: requestedField,
+    value: requestedField === "all" ? fields : fields[requestedField],
+    fields,
+    mercadoLivrePermalink: chosen.mercadoLivrePermalink || chosen.permalink || debug.resolvedUrl || null,
+    normalizedInput: debug.normalizedInput,
+    meliId: debug.meliId || null
+  };
+}
+
+function firstNonEmpty(values) {
+  return values.flat().map((value) => String(value || "").trim()).find(Boolean) || "";
+}
+
+function firstPositiveNumber(values) {
+  for (const value of values.flat()) {
+    const number = Number(value);
+    if (Number.isFinite(number) && number > 0) return number;
+  }
+  return null;
+}
+
+function uniqueNonEmpty(values) {
+  return [...new Set(values.flat().map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function createPublicError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
 export function getMeliId(product) {
   if (product.meliId) return normalizeMeliId(product.meliId);
   if (product.meliUrl) return extractMeliId(product.meliUrl);

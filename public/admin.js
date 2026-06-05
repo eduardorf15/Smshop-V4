@@ -156,6 +156,7 @@ async function onManualCreate(event) {
     tags: splitTags(text(data, "tags")),
     badge: text(data, "badge") || "Curadoria",
     sourceInput: text(data, "sourceInput"),
+    mercadoLivrePermalink: text(data, "mercadoLivrePermalink"),
     meliId: text(data, "meliId"),
     assistedMode: text(data, "assistedMode"),
     aiEnhanced: text(data, "aiEnhanced") === "true",
@@ -239,6 +240,7 @@ async function onActionClick(event) {
   if (action === "focus-import") nodes.importForm.querySelector("input[name='input']")?.focus();
   if (action === "debug-ml") await debugMercadoLivre();
   if (action === "manual-from-link") createManualFromMercadoLivreLink();
+  if (action === "ml-extract-field") await extractMercadoLivreField(button);
   if (action === "ai-description") await runAiAction("generate-description", button);
   if (action === "ai-copy") await runAiAction("generate-sales-copy", button);
   if (action === "ai-tags") await runAiAction("suggest-tags", button);
@@ -251,21 +253,8 @@ async function onActionClick(event) {
 }
 
 function createManualFromMercadoLivreLink() {
-  const importForm = nodes.importForm;
   const manualForm = nodes.manualForm;
-  const input = importForm.elements.input?.value?.trim() || "";
-  const affiliateUrl = importForm.elements.affiliateUrl?.value?.trim() || input;
-  const category = importForm.elements.category?.value || defaultCategoryName;
-  const tags = importForm.elements.tags?.value?.trim();
-  const meliId = extractMeliId(input);
-
-  manualForm.elements.affiliateUrl.value = affiliateUrl;
-  manualForm.elements.category.value = category;
-  manualForm.elements.tags.value = tags || "mercado livre, curadoria";
-  if (manualForm.elements.sourceInput) manualForm.elements.sourceInput.value = input;
-  if (manualForm.elements.meliId) manualForm.elements.meliId.value = meliId;
-  if (manualForm.elements.assistedMode) manualForm.elements.assistedMode.value = "true";
-  if (manualForm.elements.aiEnhanced) manualForm.elements.aiEnhanced.value = "";
+  prepareManualFormFromImport();
   manualForm.elements.description.value = "";
   manualForm.elements.heroImage.value = "";
   manualForm.elements.images.value = "";
@@ -274,9 +263,112 @@ function createManualFromMercadoLivreLink() {
   manualForm.elements.heroImage.placeholder = "Imagem real do produto";
   manualForm.scrollIntoView({ behavior: "smooth", block: "start" });
   manualForm.elements.name.focus();
-  const message = "Link preparado no cadastro manual. Preencha nome, preço e imagem real; depois use a IA no próprio formulário.";
+  const message = "Cadastro manual preparado. A fonte de dados ficou separada do link afiliado.";
   setMessage(message, "ok");
   setLocalMessage(manualForm, message, "ok");
+}
+
+async function extractMercadoLivreField(button) {
+  const field = button?.dataset.field || "";
+  const sourceInput = nodes.importForm.elements.input?.value?.trim() || "";
+  const affiliateUrl = nodes.importForm.elements.affiliateUrl?.value?.trim() || "";
+  clearLocalMessage(nodes.importForm);
+
+  if (!sourceInput) {
+    setLocalMessage(nodes.importForm, "Informe a URL oficial, página do produto ou MLB ID para buscar dados.", "error");
+    return;
+  }
+
+  prepareManualFormFromImport({ preserveExistingFields: true });
+  const label = button.textContent;
+  setButtonGroupBusy(button, true);
+  button.textContent = "Buscando...";
+  setLocalMessage(nodes.importForm, `${label} usando somente a fonte de dados...`, "warning");
+  try {
+    const response = await apiFetch("/api/admin/mercadolivre/extract-field", {
+      method: "POST",
+      body: JSON.stringify({ sourceInput, field })
+    });
+    const fields = response.fields || {};
+    const applied = applyExtractedFields(fields, field);
+    if (response.mercadoLivrePermalink && nodes.manualForm.elements.mercadoLivrePermalink) nodes.manualForm.elements.mercadoLivrePermalink.value = response.mercadoLivrePermalink;
+    if (nodes.manualForm.elements.affiliateUrl) {
+      nodes.manualForm.elements.affiliateUrl.value = affiliateUrl;
+    }
+    const message = field === "all" ? extractionSummary(fields) : fieldMessage(field, applied);
+    const type = applied ? "ok" : "warning";
+    setLocalMessage(nodes.importForm, message, type);
+    setLocalMessage(nodes.manualForm, message, type);
+  } catch (error) {
+    setLocalMessage(nodes.importForm, error.message, "error");
+  } finally {
+    button.textContent = label;
+    setButtonGroupBusy(button, false);
+  }
+}
+
+function prepareManualFormFromImport({ preserveExistingFields = false } = {}) {
+  const importForm = nodes.importForm;
+  const manualForm = nodes.manualForm;
+  const sourceInput = importForm.elements.input?.value?.trim() || "";
+  const affiliateUrl = importForm.elements.affiliateUrl?.value?.trim() || "";
+  const category = importForm.elements.category?.value || defaultCategoryName;
+  const tags = importForm.elements.tags?.value?.trim();
+  const meliId = extractMeliId(sourceInput);
+
+  if (manualForm.elements.sourceInput) manualForm.elements.sourceInput.value = sourceInput;
+  if (manualForm.elements.mercadoLivrePermalink && !preserveExistingFields) manualForm.elements.mercadoLivrePermalink.value = "";
+  if (manualForm.elements.meliId) manualForm.elements.meliId.value = meliId;
+  if (manualForm.elements.assistedMode) manualForm.elements.assistedMode.value = "true";
+  if (manualForm.elements.aiEnhanced && !preserveExistingFields) manualForm.elements.aiEnhanced.value = "";
+  manualForm.elements.affiliateUrl.value = affiliateUrl;
+  manualForm.elements.category.value = category;
+  if (!preserveExistingFields || !manualForm.elements.tags.value) manualForm.elements.tags.value = tags || "mercado livre, curadoria";
+}
+
+function applyExtractedFields(fields, requestedField) {
+  const form = nodes.manualForm;
+  let applied = false;
+  if ((requestedField === "name" || requestedField === "all") && fields.name) {
+    form.elements.name.value = fields.name;
+    applied = true;
+  }
+  if ((requestedField === "price" || requestedField === "all") && fields.price) {
+    form.elements.price.value = fields.price;
+    applied = true;
+  }
+  if ((requestedField === "images" || requestedField === "all") && Array.isArray(fields.images) && fields.images.length) {
+    form.elements.heroImage.value = fields.heroImage || fields.images[0] || "";
+    form.elements.images.value = fields.images.slice(1).join("\n");
+    applied = true;
+  }
+  if ((requestedField === "description" || requestedField === "all") && fields.description) {
+    form.elements.description.value = fields.description;
+    applied = true;
+  }
+  return applied;
+}
+
+function fieldMessage(field, applied) {
+  if (applied && field === "name") return "Nome preenchido no cadastro manual.";
+  if (applied && field === "price") return "Preço preenchido no cadastro manual.";
+  if (applied && field === "images") return "Imagem principal e adicionais preenchidas no cadastro manual.";
+  if (applied && field === "description") return "Descrição preenchida no cadastro manual.";
+  return {
+    name: "Nome não encontrado",
+    price: "Preço não encontrado",
+    images: "Nenhuma imagem encontrada",
+    description: "Descrição não encontrada. Use IA."
+  }[field] || "Dados não encontrados";
+}
+
+function extractionSummary(fields) {
+  return [
+    `Nome ${fields.name ? "✅" : "❌"}`,
+    `Preço ${fields.price ? "✅" : "❌"}`,
+    `Imagens ${Array.isArray(fields.images) && fields.images.length ? "✅" : "❌"}`,
+    `Descrição ${fields.description ? "✅" : "❌"}`
+  ].join(" | ");
 }
 
 function onFilter(event) {
@@ -433,6 +525,7 @@ function productFromManualForm() {
     images,
     heroImage: images[0] || "",
     sourceInput: text(data, "sourceInput"),
+    mercadoLivrePermalink: text(data, "mercadoLivrePermalink"),
     meliId: text(data, "meliId"),
     tags: splitTags(text(data, "tags")),
     badge: text(data, "badge"),
@@ -537,6 +630,17 @@ function getEditableAiResult(options = {}) {
 function setButtonBusy(button, busy) {
   if (!button) return;
   button.disabled = busy;
+}
+
+function setButtonGroupBusy(button, busy) {
+  const group = button?.closest?.("[data-ml-field-actions]");
+  if (!group) {
+    setButtonBusy(button, busy);
+    return;
+  }
+  group.querySelectorAll("button").forEach((item) => {
+    item.disabled = busy;
+  });
 }
 
 function formatPrice(value) {

@@ -51,8 +51,8 @@
             </div>
           </div>
           <label>
-            URL Mercado Livre, MLB ID ou meli.la
-            <input name="input" placeholder="MLB66266661 ou https://meli.la/..." required />
+            URL Mercado Livre, MLB ID ou página do produto
+            <input name="input" placeholder="MLB31761158 ou https://www.mercadolivre.com.br/.../p/MLB31761158" required />
           </label>
           <label>
             Link afiliado obrigatório
@@ -79,7 +79,14 @@
           <div class="modal-actions">
             <button type="submit">Importar e publicar</button>
             <button type="button" class="ghost" data-action="debug-ml">Debug ML</button>
-            <button type="button" class="ghost" data-action="manual-from-link">Criar manual com IA a partir do link</button>
+            <button type="button" class="ghost" data-action="manual-from-link">Preparar cadastro manual</button>
+          </div>
+          <div class="field-actions" data-ml-field-actions>
+            <button type="button" class="ghost" data-action="ml-extract-field" data-field="name">Buscar nome</button>
+            <button type="button" class="ghost" data-action="ml-extract-field" data-field="price">Buscar preço</button>
+            <button type="button" class="ghost" data-action="ml-extract-field" data-field="images">Buscar imagens</button>
+            <button type="button" class="ghost" data-action="ml-extract-field" data-field="description">Buscar descrição</button>
+            <button type="button" data-action="ml-extract-field" data-field="all">Buscar tudo</button>
           </div>
           <div class="local-message" data-local-message aria-live="polite"></div>
         </form>
@@ -92,6 +99,7 @@
             </div>
           </div>
           <input name="sourceInput" type="hidden" />
+          <input name="mercadoLivrePermalink" type="hidden" />
           <input name="meliId" type="hidden" />
           <input name="assistedMode" type="hidden" />
           <input name="aiEnhanced" type="hidden" />

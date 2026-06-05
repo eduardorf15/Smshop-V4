@@ -1,3 +1,4 @@
+import * as cheerio from "cheerio";
 import { getAuthDebugStatus, getValidAccessToken } from "../mercadoLivreAuthService.js";
 import { detectIdKind, normalizeMercadoLivreInput } from "./normalizeInput.js";
 
@@ -26,6 +27,10 @@ export async function fetchMercadoLivreData(input, options = {}) {
 
   if (needsMoreData(merged)) {
     merged = mergePayloads(merged, await fetchSearchFallback(normalizedInput, merged, auth, trace));
+  }
+
+  if (needsMoreData(merged)) {
+    merged = mergePayloads(merged, await fetchHtmlFallback(normalizedInput, trace));
   }
 
   const finalPayload = finalizePayload(merged, normalizedInput);
@@ -101,6 +106,47 @@ async function fetchSearchFallback(normalizedInput, current, auth, trace) {
     .sort((a, b) => b.score - a.score)[0]?.offer || null;
   recordPayloadCandidates(trace, best, `api/search/${query}`);
   return best ? { ...best, source: "search", confidence: confidence(best) } : null;
+}
+
+async function fetchHtmlFallback(normalizedInput, trace) {
+  const url = normalizedInput.resolvedUrl || normalizedInput.originalInput;
+  if (!/^https?:\/\//i.test(url)) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    const response = await fetch(url, {
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "User-Agent": "Mozilla/5.0 SMShopBot/1.0"
+      },
+      signal: controller.signal
+    });
+    const html = await response.text();
+    clearTimeout(timeout);
+    recordAttempt(trace, {
+      layer: "html",
+      method: "GET",
+      url,
+      status: response.status,
+      ok: response.ok,
+      details: response.ok ? "ok" : `HTML retornou status ${response.status}`
+    });
+    if (!response.ok || !html) return null;
+    const payload = fromHtmlPage(html, url);
+    trace.htmlExtraction = summarizePayload(payload);
+    recordPayloadCandidates(trace, payload, "html/page");
+    return payload;
+  } catch (error) {
+    recordAttempt(trace, {
+      layer: "html",
+      method: "GET",
+      url,
+      status: 0,
+      ok: false,
+      details: error.message
+    });
+    return null;
+  }
 }
 
 async function fetchMeliResource(pathname, auth, trace, options = {}) {
@@ -395,6 +441,53 @@ function emptyPayload(source) {
   return { source, title: "", description: "", price: null, oldPrice: null, images: [], thumbnail: null, permalink: null, seller: null, attributes: [], confidence: 0 };
 }
 
+function fromHtmlPage(html, url) {
+  const $ = cheerio.load(html);
+  const text = $.html();
+  const objects = [
+    ...extractNextData($),
+    ...extractAssignedJson(text, "__PRELOADED_STATE__"),
+    ...extractAssignedJson(text, "__STATE__"),
+    ...$("script[type='application/ld+json']").toArray().flatMap((script) => parseJsonCandidates($(script).contents().text()))
+  ];
+  const productNode = findProductNode(objects);
+  const scriptValues = collectScriptValues(objects, text);
+  const title = cleanTitle(
+    scriptValues.title ||
+    productNode?.name ||
+    meta($, "property", "og:title") ||
+    $("title").first().text()
+  );
+  const description = cleanText(
+    scriptValues.description ||
+    productNode?.description ||
+    meta($, "name", "description") ||
+    meta($, "property", "og:description")
+  );
+  const images = [...new Set([
+    ...scriptValues.images,
+    ...normalizeImages(productNode?.image),
+    meta($, "property", "og:image")
+  ].filter(isValidImage))];
+  return {
+    title,
+    description,
+    price: firstPositive([scriptValues.price, productNode?.offers?.price, productNode?.offers?.lowPrice, ...extractVisiblePrices($)]),
+    oldPrice: null,
+    images,
+    thumbnail: images[0] || null,
+    permalink: url,
+    seller: null,
+    attributes: [],
+    source: "html",
+    titleSource: title ? "html:title" : null,
+    imageSource: images.length ? "html:image" : null,
+    priceSource: scriptValues.price ? "html:script.price" : null,
+    confidence: confidence({ title, description, price: scriptValues.price, images }),
+    fetchedAt: new Date().toISOString()
+  };
+}
+
 function buildSearchQuery(input, current) {
   return cleanTitle(current.title) || cleanText(input.slug).replace(/-/g, " ") || input.itemId || input.catalogId || "";
 }
@@ -658,7 +751,7 @@ function cleanTitle(value) {
   const text = cleanText(value)
     .replace(/\s*\|\s*Mercado Livre.*$/i, "")
     .replace(/\s*-\s*Mercado Livre.*$/i, "");
-  if (/^(mercado\s*livre|mercadolivre|produto\s+mercado\s+livre|mercado\s*livre\s+brasil)$/i.test(text)) return "";
+  if (/^(mercado\s*livre|mercadolivre|mercado\s*libre|mercadolibre|produto\s+mercado\s+livre|mercado\s*livre\s+brasil)$/i.test(text)) return "";
   if (/^ML[A-Z]{1,2}\d{3,}$/i.test(text)) return "";
   return text;
 }
